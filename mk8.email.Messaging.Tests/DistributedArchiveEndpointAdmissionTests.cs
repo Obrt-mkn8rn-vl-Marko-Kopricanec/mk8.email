@@ -38,7 +38,7 @@ internal sealed class DistributedArchiveEndpointAdmissionTests
         Assert.DoesNotContain(endpoint, error.Message, StringComparison.Ordinal);
         Assert.AreEqual(0, transport.Requests);
         Assert.IsFalse(Path.Exists(fixture.Destination));
-        Assert.HasCount(2, Directory.EnumerateFileSystemEntries(fixture.Root.FullName));
+        Assert.HasCount(1, Directory.EnumerateFileSystemEntries(fixture.Root.FullName));
     }
 
     [TestMethod]
@@ -83,13 +83,39 @@ internal sealed class DistributedArchiveEndpointAdmissionTests
             InvokeAsync(fetch, service, fixture, TestContext.CancellationToken)).ConfigureAwait(false);
         Assert.AreEqual(0, transport.Requests);
         Assert.IsFalse(Path.Exists(fixture.Destination));
-        Assert.HasCount(2, Directory.EnumerateFileSystemEntries(fixture.Root.FullName));
+        Assert.HasCount(1, Directory.EnumerateFileSystemEntries(fixture.Root.FullName));
+    }
+
+    [TestMethod]
+    public async Task RetiredFileEntryPointsRefuseBeforeArchiveOrTransportEffects()
+    {
+        if (!OperatingSystem.IsLinux()) throw new AssertInconclusiveException("The private archive fixture requires Linux.");
+        Assert.IsNotNull(TestContext);
+        using var fixture = new ArchiveFixture();
+        await fixture.PrepareAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var path = Path.Combine(fixture.Root.FullName, "retired-verifier.pem");
+        var value = fixture.Verifier.ExportSubjectPublicKeyInfoPem();
+        await File.WriteAllTextAsync(path, value, TestContext.CancellationToken).ConfigureAwait(false);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var transport = new StoppedTransport();
+        var service = CreateService("https://account.blob.example.test/", transport);
+        var publish = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => DistributedArchiveStore.PublishAsync(
+            service, Container, ArchiveId, fixture.SealedDirectory, path, TestContext.CancellationToken)).ConfigureAwait(false);
+        var fetch = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => DistributedArchiveStore.FetchAsync(
+            service, Container, ArchiveId, fixture.Destination, path, TestContext.CancellationToken)).ConfigureAwait(false);
+        Assert.AreEqual("Archive key-file inputs are retired; supply an owned snapshot verifier.", publish.Message, StringComparer.Ordinal);
+        Assert.AreEqual(publish.Message, fetch.Message, StringComparer.Ordinal);
+        var connection = Assert.ThrowsExactly<InvalidOperationException>(() => DistributedArchiveStore.ReadPrivateConnectionString(path));
+        Assert.AreEqual("Separate connection-string files are retired; use the protected startup snapshot.", connection.Message, StringComparer.Ordinal);
+        Assert.AreEqual(0, transport.Requests);
+        Assert.IsFalse(Path.Exists(fixture.Destination));
+        Assert.AreEqual(value, await File.ReadAllTextAsync(path, TestContext.CancellationToken).ConfigureAwait(false), StringComparer.Ordinal);
     }
 
     private static Task InvokeAsync(bool fetch, BlobServiceClient service, ArchiveFixture fixture, CancellationToken token) =>
         fetch
-            ? DistributedArchiveStore.FetchAsync(service, Container, ArchiveId, fixture.Destination, fixture.Verifier, token)
-            : DistributedArchiveStore.PublishAsync(service, Container, ArchiveId, fixture.SealedDirectory, fixture.Verifier, token);
+            ? DistributedArchiveStore.FetchWithVerifierAsync(service, Container, ArchiveId, fixture.Destination, fixture.Verifier, token)
+            : DistributedArchiveStore.PublishWithVerifierAsync(service, Container, ArchiveId, fixture.SealedDirectory, fixture.Verifier, token);
 
     private static BlobServiceClient CreateService(string endpoint, StoppedTransport transport) =>
         new(new Uri(endpoint), new StorageSharedKeyCredential("account", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
@@ -104,10 +130,11 @@ internal sealed class DistributedArchiveEndpointAdmissionTests
     // test admission only. No endpoint/account/PKI/encryption or backup is adopted.
     private sealed class ArchiveFixture : IDisposable
     {
+        private RSA? _verifier;
         public DirectoryInfo Root { get; } = Directory.CreateTempSubdirectory("mk8-archive-admission-");
         public string SealedDirectory => Path.Combine(Root.FullName, "sealed");
         public string Destination => Path.Combine(Root.FullName, "destination");
-        public string Verifier => Path.Combine(Root.FullName, "verification.pem");
+        public RSA Verifier => _verifier ?? throw new InvalidOperationException("The fixture verifier has not been prepared.");
 
         public async Task PrepareAsync(CancellationToken token)
         {
@@ -120,8 +147,8 @@ internal sealed class DistributedArchiveEndpointAdmissionTests
             var signature = signer.SignHash(SHA256.HashData(cipher), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
             await WritePrivateAsync(Path.Combine("sealed", "snapshot.tar.age"), cipher, token).ConfigureAwait(false);
             await WritePrivateAsync(Path.Combine("sealed", "snapshot.tar.age.sig"), signature, token).ConfigureAwait(false);
-            await WritePrivateAsync("verification.pem", System.Text.Encoding.UTF8.GetBytes(signer.ExportSubjectPublicKeyInfoPem()), token)
-                .ConfigureAwait(false);
+            _verifier = RSA.Create();
+            _verifier.ImportSubjectPublicKeyInfo(signer.ExportSubjectPublicKeyInfo(), out _);
         }
 
         private async Task WritePrivateAsync(string name, byte[] bytes, CancellationToken token)
@@ -134,7 +161,8 @@ internal sealed class DistributedArchiveEndpointAdmissionTests
 
         public void Dispose()
         {
-            Root.Delete(recursive: true);
+            try { _verifier?.Dispose(); }
+            finally { Root.Delete(recursive: true); }
             GC.SuppressFinalize(this);
         }
     }

@@ -225,124 +225,67 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
-    public void LoaderReadsPasswordsFromSecretFiles()
+    public void RetiredLoaderRefusesDatabaseSecretFiles()
     {
-        var databasePasswordPath = WriteFile("database-password", "database-secret-value");
-        var configuration = CreateValidConfiguration(databasePasswordPath);
-        var configurationPath = WriteFile(
-            "mk8email.config.json",
-            JsonSerializer.Serialize(configuration));
-
-        var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
-
-        Assert.AreEqual("database-secret-value", loaded.Database.Password, StringComparer.Ordinal);
+        var secret = WriteFile("database-password", "synthetic-retired-database-password");
+        var path = WriteFile("retired-database.json", JsonSerializer.Serialize(CreateValidConfiguration(secret)));
+        AssertLegacyRefusal(path);
+        Assert.AreEqual("synthetic-retired-database-password", File.ReadAllText(secret), StringComparer.Ordinal);
     }
 
     [TestMethod]
-    public void LoaderReadsMfaEncryptionKeyFromSecretFile()
+    public void RetiredLoaderRefusesMfaSecretFiles()
     {
-        var encodedKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-        var keyPath = WriteFile("mfa-encryption-key", encodedKey);
-        var configuration = CreateValidConfiguration(
-            oauthEnable: true,
-            mfaEnable: true,
-            mfaEncryptionKeyFile: keyPath);
-        var configurationPath = WriteFile(
-            "mk8email-mfa.config.json",
-            JsonSerializer.Serialize(configuration));
-
-        var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
-
-        Assert.AreEqual(encodedKey, loaded.Mfa.EncryptionKey, StringComparer.Ordinal);
+        var value = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var secret = WriteFile("retired-mfa-key", value);
+        var path = WriteFile("retired-mfa.json", JsonSerializer.Serialize(
+            CreateValidConfiguration(oauthEnable: true, mfaEnable: true, mfaEncryptionKeyFile: secret)));
+        AssertLegacyRefusal(path);
+        Assert.AreEqual(value, File.ReadAllText(secret), StringComparer.Ordinal);
     }
 
     [TestMethod]
-    public void LoaderReadsOpenIdConnectSigningKeyFromSecretFile()
+    public void RetiredLoaderRefusesOpenIdSigningKeyFiles()
     {
-        using var rsa = System.Security.Cryptography.RSA.Create(2048);
-        var signingKey = rsa.ExportPkcs8PrivateKeyPem();
-        var keyPath = WriteFile("oidc-signing-key.pem", signingKey);
-        var configuration = CreateValidConfiguration(
-            oauthEnable: true,
-            oidcEnable: true,
-            oidcSigningKeyFile: keyPath);
-        var configurationPath = WriteFile(
-            "mk8email-oidc.config.json",
-            JsonSerializer.Serialize(configuration));
-
-        var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
-
-        Assert.AreEqual(signingKey.TrimEnd('\r', '\n'), loaded.OAuth.SigningKey, StringComparer.Ordinal);
+        using var signer = RSA.Create(2048);
+        var value = signer.ExportPkcs8PrivateKeyPem();
+        var secret = WriteFile("retired-signing-key.pem", value);
+        var path = WriteFile("retired-oidc.json", JsonSerializer.Serialize(
+            CreateValidConfiguration(oauthEnable: true, oidcEnable: true, oidcSigningKeyFile: secret)));
+        AssertLegacyRefusal(path);
+        Assert.AreEqual(value, File.ReadAllText(secret), StringComparer.Ordinal);
     }
 
     [TestMethod]
-    public void GatewayLoaderDoesNotReadApplicationOnlyOAuthOrMfaSecrets()
+    public void RetiredGatewayLoaderRefusesWorkerSecretLocators()
     {
-        var configuration = CreateValidConfiguration(
-            oauthEnable: true,
-            oauthPublicBaseUrl: "https://email.tenant.example.test",
-            oidcEnable: true,
-            oidcSigningKeyFile: Path.Combine(_testDirectory, "worker-only-signing-key"),
-            mfaEnable: true,
-            mfaEncryptionKeyFile: Path.Combine(_testDirectory, "worker-only-mfa-key"));
-        var configurationPath = WriteFile(
-            "mk8email-gateway.config.json",
-            JsonSerializer.Serialize(configuration));
-
-        var loaded = EnvironmentLoader.LoadFromFile(
-            configurationPath,
-            role: EnvironmentValidationRole.Gateway);
-
-        Assert.AreEqual(string.Empty, loaded.OAuth.SigningKey, StringComparer.Ordinal);
-        Assert.AreEqual(string.Empty, loaded.Mfa.EncryptionKey, StringComparer.Ordinal);
+        var signing = Path.Combine(_testDirectory, "never-created-worker-signing-key");
+        var mfa = Path.Combine(_testDirectory, "never-created-worker-mfa-key");
+        var path = WriteFile("retired-gateway.json", JsonSerializer.Serialize(CreateValidConfiguration(
+            oauthEnable: true, oidcEnable: true, oidcSigningKeyFile: signing,
+            mfaEnable: true, mfaEncryptionKeyFile: mfa)));
+        AssertLegacyRefusal(path, EnvironmentValidationRole.Gateway);
+        Assert.IsFalse(File.Exists(signing));
+        Assert.IsFalse(File.Exists(mfa));
     }
 
     [TestMethod]
-    public void GatewayLoaderRejectsEmbeddedWorkerOnlySecrets()
+    public void RetiredLoaderCannotAdmitEmbeddedWorkerSecrets()
     {
-        var signingConfiguration = CreateValidConfiguration(
-            oauthEnable: true,
-            oidcEnable: true,
-            oidcSigningKey: "worker-signing-secret");
-        var signingPath = WriteFile(
-            "gateway-with-worker-signing-secret.json",
-            JsonSerializer.Serialize(signingConfiguration));
-        var signingException = Assert.ThrowsExactly<InvalidOperationException>(() =>
-            EnvironmentLoader.LoadFromFile(signingPath, role: EnvironmentValidationRole.Gateway));
-        StringAssert.Contains(signingException.Message, "Worker-only OAuth or MFA secret values", StringComparison.Ordinal);
-
-        var mfaConfiguration = CreateValidConfiguration(
-            oauthEnable: true,
-            mfaEnable: true,
-            mfaEncryptionKey: "worker-mfa-secret");
-        var mfaPath = WriteFile(
-            "gateway-with-worker-mfa-secret.json",
-            JsonSerializer.Serialize(mfaConfiguration));
-        var mfaException = Assert.ThrowsExactly<InvalidOperationException>(() =>
-            EnvironmentLoader.LoadFromFile(mfaPath, role: EnvironmentValidationRole.Gateway));
-        StringAssert.Contains(mfaException.Message, "Worker-only OAuth or MFA secret values", StringComparison.Ordinal);
+        var path = WriteFile("retired-embedded.json", JsonSerializer.Serialize(CreateValidConfiguration(
+            oauthEnable: true, oidcEnable: true, oidcSigningKey: "synthetic-embedded-signing-secret",
+            mfaEnable: true, mfaEncryptionKey: "synthetic-embedded-mfa-secret")));
+        AssertLegacyRefusal(path, EnvironmentValidationRole.Gateway);
+        AssertLegacyRefusal(path, EnvironmentValidationRole.ApplicationWorker);
     }
 
     [TestMethod]
     public void GatewayDoesNotRequireApplicationOnlyDkimPrivateKey()
     {
-        var configuration = CreateValidConfiguration(
-            enableDkimSigning: true,
-            dkimPrivateKeyPem: string.Empty);
-        var configurationPath = WriteFile(
-            "mk8email-gateway-with-dkim.config.json",
-            JsonSerializer.Serialize(configuration));
-
-        var gateway = EnvironmentLoader.LoadFromFile(
-            configurationPath,
-            role: EnvironmentValidationRole.Gateway);
-        Assert.AreEqual(0, gateway.Validate(role: EnvironmentValidationRole.Gateway).Count);
-
-        var exception = Assert.ThrowsExactly<InvalidOperationException>(() =>
-            EnvironmentLoader.LoadFromFile(
-                configurationPath,
-                role: EnvironmentValidationRole.ApplicationWorker));
-        StringAssert.Contains(exception.Message, "Dkim.PrivateKeyPem", StringComparison.Ordinal);
+        var configuration = CreateValidConfiguration(enableDkimSigning: true, dkimPrivateKeyPem: string.Empty);
+        Assert.IsEmpty(configuration.Validate(role: EnvironmentValidationRole.Gateway));
+        Assert.Contains("Dkim.PrivateKeyPem",
+            string.Join(";", configuration.Validate(role: EnvironmentValidationRole.ApplicationWorker)), StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -409,46 +352,20 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
-    public void LoaderReadsDistributedMessagingSecretsFromFiles()
+    public void RetiredLoaderRefusesDistributedSecretFilesForEveryRole()
     {
-        var activeKey = Convert.ToBase64String(
-            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-        var oldKey = Convert.ToBase64String(
-            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-        var connectionString =
-            "DefaultEndpointsProtocol=https;AccountName=mk8;AccountKey=test;"
-            + "BlobEndpoint=https://blob.example.test/;";
-        var activePath = WriteFile("messaging-active-key", activeKey);
-        var oldPath = WriteFile("messaging-old-key", oldKey);
-        var connectionPath = WriteFile("blob-connection", connectionString);
-        var configuration = CreateValidConfiguration(
-            messagingEnabled: true,
-            messagingEncryptionKeyFile: activePath,
-            messagingDecryptionKeys:
-            [
-                new MessagingDecryptionKeyConfig { Id = "old", KeyFile = oldPath },
-            ],
-            objectStorageConnectionStringFile: connectionPath);
-        var configurationPath = WriteFile(
-            "mk8email-messaging.config.json",
-            JsonSerializer.Serialize(configuration));
-
-        var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
-        var gateway = EnvironmentLoader.LoadFromFile(
-            configurationPath, role: EnvironmentValidationRole.Gateway);
-        var worker = EnvironmentLoader.LoadFromFile(
-            configurationPath, role: EnvironmentValidationRole.ApplicationWorker);
-
-        Assert.AreEqual(activeKey, loaded.Messaging.EncryptionKey, StringComparer.Ordinal);
-        Assert.AreEqual(oldKey, loaded.Messaging.DecryptionKeys.Single().Key, StringComparer.Ordinal);
-        Assert.AreEqual(connectionString, loaded.ObjectStorage.ConnectionString, StringComparer.Ordinal);
-        Assert.AreEqual(0, loaded.Validate().Count);
-        Assert.AreEqual(activeKey, gateway.Messaging.EncryptionKey, StringComparer.Ordinal);
-        Assert.AreEqual(connectionString, gateway.ObjectStorage.ConnectionString, StringComparer.Ordinal);
-        Assert.AreEqual(0, gateway.Validate(role: EnvironmentValidationRole.Gateway).Count);
-        Assert.AreEqual(activeKey, worker.Messaging.EncryptionKey, StringComparer.Ordinal);
-        Assert.AreEqual(connectionString, worker.ObjectStorage.ConnectionString, StringComparer.Ordinal);
-        Assert.AreEqual(0, worker.Validate(role: EnvironmentValidationRole.ApplicationWorker).Count);
+        var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var active = WriteFile("retired-active-key", key);
+        var old = WriteFile("retired-old-key", key);
+        var connection = WriteFile("retired-blob-connection", "synthetic-retired-connection");
+        var path = WriteFile("retired-messaging.json", JsonSerializer.Serialize(CreateValidConfiguration(
+            messagingEnabled: true, messagingEncryptionKeyFile: active,
+            messagingDecryptionKeys: [new MessagingDecryptionKeyConfig { Id = "old", KeyFile = old }],
+            objectStorageConnectionStringFile: connection)));
+        foreach (var role in Enum.GetValues<EnvironmentValidationRole>()) AssertLegacyRefusal(path, role);
+        Assert.AreEqual(key, File.ReadAllText(active), StringComparer.Ordinal);
+        Assert.AreEqual(key, File.ReadAllText(old), StringComparer.Ordinal);
+        Assert.AreEqual("synthetic-retired-connection", File.ReadAllText(connection), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -502,14 +419,17 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
-    public void LoaderRejectsUnknownConfigurationProperties()
+    public void RetiredLoaderRefusesUnknownJsonWithoutParsing()
     {
-        var configurationPath = WriteFile("invalid.json", "{\"UnknownProperty\":true}");
+        var path = WriteFile("retired-unknown.json", "{\"UnknownProperty\":true}");
+        AssertLegacyRefusal(path);
+    }
 
-        var exception = Assert.ThrowsExactly<InvalidOperationException>(
-            () => EnvironmentLoader.LoadFromFile(configurationPath));
-
-        StringAssert.Contains(exception.Message, "The configuration file is not valid JSON", StringComparison.Ordinal);
+    private static void AssertLegacyRefusal(string path, EnvironmentValidationRole role = EnvironmentValidationRole.Combined)
+    {
+        var failure = Assert.ThrowsExactly<InvalidOperationException>(() => EnvironmentLoader.LoadFromFile(path, role: role));
+        Assert.AreEqual("Legacy JSON/environment configuration is retired; await PortableEnvironmentLoader at the fixed installation root.", failure.Message, StringComparer.Ordinal);
+        Assert.IsNull(failure.InnerException);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
@@ -679,7 +599,7 @@ public sealed class EnvironmentConfigTests
             Admin = new AdminConfig
             {
                 AllowedNetworks = ["127.0.0.0/8"],
-                DataProtectionKeyPath = Path.Combine(_testDirectory, "data-protection"),
+                DataProtectionKeys = [PortableCookieKeyFixture.Create()],
                 AuditLogPath = Path.Combine(_testDirectory, "audit", "admin.jsonl"),
                 HealthStatusPath = Path.Combine(_testDirectory, "health", "status.json"),
                 SessionMinutes = 30,

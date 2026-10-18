@@ -405,7 +405,7 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
                 Admin = new AdminConfig
                 {
                     AllowedNetworks = ["127.0.0.1/32"],
-                    DataProtectionKeyPath = "/tmp/mk8-capture-keys",
+                    DataProtectionKeys = [PortableCookieKeyFixture.Create()],
                     AuditLogPath = "/tmp/mk8-capture-audit",
                     HealthStatusPath = "/tmp/mk8-capture-health"
                 },

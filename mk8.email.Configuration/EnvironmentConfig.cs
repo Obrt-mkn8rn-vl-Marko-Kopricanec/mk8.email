@@ -28,6 +28,7 @@ public sealed class EnvironmentConfig
     public MessagingConfig Messaging { get; init; } = new();
     public ObjectStorageConfig ObjectStorage { get; init; } = new();
     public GatewayHttpConfig Http { get; init; } = new();
+    public ManagementConfig Management { get; init; } = new();
 
     public string BuildConnectionString()
     {
@@ -342,10 +343,13 @@ public sealed class EnvironmentConfig
 
         if (validatesPresentation && !isDevelopment && Admin.AllowedNetworks.Count == 0)
             errors.Add("Admin.AllowedNetworks must contain at least one network in production.");
-        if (validatesPresentation
-            && !isDevelopment
-            && !Path.IsPathFullyQualified(Admin.DataProtectionKeyPath))
-            errors.Add("Admin.DataProtectionKeyPath must be an absolute path in production.");
+        if (!string.IsNullOrEmpty(Admin.DataProtectionKeyPath))
+            errors.Add("Admin.DataProtectionKeyPath is retired; use protected DataProtectionKeys values.");
+        if (validatesPresentation && !isDevelopment)
+        {
+            try { DataProtectionKeyConfig.ValidateKeys(Admin.DataProtectionKeys); }
+            catch (InvalidOperationException exception) { errors.Add(exception.Message); }
+        }
         if (validatesPresentation && !isDevelopment && !Path.IsPathFullyQualified(Admin.AuditLogPath))
             errors.Add("Admin.AuditLogPath must be an absolute path in production.");
         if (validatesPresentation

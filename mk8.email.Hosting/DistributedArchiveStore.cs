@@ -21,12 +21,23 @@ public static partial class DistributedArchiveStore
     private const string IndexName = "complete.json";
     private const int MaximumIndexBytes = 4096;
 
-    public static async Task PublishAsync(
+    // Kept source-compatible, but the retired locator cannot read a key or perform I/O.
+    public static Task PublishAsync(
         BlobServiceClient service,
         string containerName,
         string archiveId,
         string archiveDirectory,
         string verificationKeyPath,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(new InvalidOperationException("Archive key-file inputs are retired; supply an owned snapshot verifier."));
+
+    /// <summary>Publishes with a borrowed verifier; retain it unchanged and undisposed until this task settles.</summary>
+    public static async Task PublishWithVerifierAsync(
+        BlobServiceClient service,
+        string containerName,
+        string archiveId,
+        string archiveDirectory,
+        RSA verifier,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(service);
@@ -39,7 +50,7 @@ public static partial class DistributedArchiveStore
         if (Directory.EnumerateFileSystemEntries(archiveDirectory).Count() != 2)
             throw new InvalidOperationException("The sealed archive contains unexpected entries.");
 
-        using var verifier = LoadVerifier(verificationKeyPath);
+        RequireVerifier(verifier);
         var cipherDigest = await DigestFileAsync(cipher, cancellationToken).ConfigureAwait(false);
         var signatureDigest = await DigestFileAsync(signature, cancellationToken).ConfigureAwait(false);
         if (cipherDigest.Length <= 0
@@ -89,12 +100,23 @@ public static partial class DistributedArchiveStore
             throw new InvalidOperationException("The archive completion index did not round-trip.");
     }
 
-    public static async Task FetchAsync(
+    // Kept source-compatible, but the retired locator cannot read a key or perform I/O.
+    public static Task FetchAsync(
         BlobServiceClient service,
         string containerName,
         string archiveId,
         string destinationDirectory,
         string verificationKeyPath,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(new InvalidOperationException("Archive key-file inputs are retired; supply an owned snapshot verifier."));
+
+    /// <summary>Fetches with a borrowed verifier; retain it unchanged and undisposed until this task settles.</summary>
+    public static async Task FetchWithVerifierAsync(
+        BlobServiceClient service,
+        string containerName,
+        string archiveId,
+        string destinationDirectory,
+        RSA verifier,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(service);
@@ -110,7 +132,7 @@ public static partial class DistributedArchiveStore
         if (Path.Exists(destinationDirectory))
             throw new IOException("The archive destination already exists.");
 
-        using var verifier = LoadVerifier(verificationKeyPath);
+        RequireVerifier(verifier);
         var keyHash = Convert.ToHexStringLower(
             SHA256.HashData(verifier.ExportSubjectPublicKeyInfo()));
         var root = $"distributed-archives/v1/{archiveId}/";
@@ -162,18 +184,8 @@ public static partial class DistributedArchiveStore
         return container;
     }
 
-    public static string ReadPrivateConnectionString(string path)
-    {
-        RequirePrivateFile(path);
-        if (new FileInfo(path).Length > 16 * 1024)
-            throw new InvalidOperationException("The Blob connection-string file is too large.");
-        var value = File.ReadAllText(path).TrimEnd('\r', '\n');
-        if (string.IsNullOrWhiteSpace(value)
-            || value.Contains('\n', StringComparison.Ordinal)
-            || value.Contains('\r', StringComparison.Ordinal))
-            throw new InvalidOperationException("The Blob connection-string file is invalid.");
-        return value;
-    }
+    public static string ReadPrivateConnectionString(string path) =>
+        throw new InvalidOperationException("Separate connection-string files are retired; use the protected startup snapshot.");
 
     private static async Task PublishFileAsync(
         BlobClient blob, string path, FileDigest expected,
@@ -312,24 +324,11 @@ public static partial class DistributedArchiveStore
         return index;
     }
 
-    private static RSA LoadVerifier(string path)
+    private static void RequireVerifier(RSA verifier)
     {
-        RequirePrivateFile(path);
-        if (new FileInfo(path).Length > 64 * 1024)
-            throw new CryptographicException("The archive verification key is too large.");
-        var key = RSA.Create();
-        try
-        {
-            key.ImportFromPem(File.ReadAllText(path));
-            if (key.KeySize < 3072)
-                throw new CryptographicException("The archive verification key is too weak.");
-            return key;
-        }
-        catch
-        {
-            key.Dispose();
-            throw;
-        }
+        ArgumentNullException.ThrowIfNull(verifier);
+        if (verifier.KeySize < 3072)
+            throw new CryptographicException("The archive verification key is too weak.");
     }
 
     private static void ValidateArchiveId(string archiveId)

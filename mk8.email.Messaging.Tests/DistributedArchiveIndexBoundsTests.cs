@@ -50,7 +50,7 @@ internal sealed class DistributedArchiveIndexBoundsTests
     }
 
     private static Task FetchAsync(DistributedArchiveIndexFixture fixture, CancellationToken token) =>
-        DistributedArchiveStore.FetchAsync(fixture.Service, DistributedArchiveIndexFixture.Container,
+        DistributedArchiveStore.FetchWithVerifierAsync(fixture.Service, DistributedArchiveIndexFixture.Container,
             DistributedArchiveIndexFixture.ArchiveId, fixture.Destination, fixture.Verifier, token);
 
     private static void AssertRefused(DistributedArchiveIndexFixture fixture)

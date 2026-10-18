@@ -19,6 +19,11 @@
 
   <ItemGroup>
     <AdditionalFiles Include="BannedSymbols.txt" />
+    <!-- Only named nonsecret outlines may enter build/publish items. -->
+    <Content Remove="Environment/**" />
+    <None Remove="Environment/**" />
+    <None Include="Environment/.env.template" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="Environment/archive.env.template" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

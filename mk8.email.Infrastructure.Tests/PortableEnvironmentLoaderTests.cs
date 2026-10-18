@@ -17,7 +17,7 @@ public sealed class PortableEnvironmentLoaderTests
     [TestMethod]
     public async Task WorkerRefusesGatewayTlsMaterialBeforeCertificateImport()
     {
-        using var fixture = new SettingsFixture();
+        using var fixture = new SettingsFixture(includeCookieKeys: false);
         fixture.Values["Tls:CertificatePkcs12"] = "synthetic-gateway-only-material";
         await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
         var failure = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
@@ -46,7 +46,7 @@ public sealed class PortableEnvironmentLoaderTests
     [TestMethod]
     public async Task ProtectedDkimMaterialRemainsAnIndependentWorkerStartupSnapshot()
     {
-        using var fixture = new SettingsFixture();
+        using var fixture = new SettingsFixture(includeCookieKeys: false);
         using var expected = System.Security.Cryptography.RSA.Create(2048);
         fixture.Values["Dkim:EnableSigning"] = "true";
         fixture.Values["Dkim:PrivateKeyPem"] = expected.ExportPkcs8PrivateKeyPem();
@@ -68,7 +68,7 @@ public sealed class PortableEnvironmentLoaderTests
     [DataRow(EnvironmentValidationRole.ApplicationWorker)]
     public async Task PortableValuesAreValidatedAndRemainAStartupSnapshot(EnvironmentValidationRole role)
     {
-        using var fixture = new SettingsFixture();
+        using var fixture = new SettingsFixture(includeCookieKeys: role is not EnvironmentValidationRole.ApplicationWorker);
         await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
         var loaded = await LoadAsync(fixture, role).ConfigureAwait(false);
         fixture.Values["Database:Password"] = "later-synthetic-secret";
@@ -115,6 +115,7 @@ public sealed class PortableEnvironmentLoaderTests
     [DataRow("Tls:CertificatePath")]
     [DataRow("Tls:CertificateKeyPath")]
     [DataRow("Dkim:PrivateKeyPath")]
+    [DataRow("Admin:DataProtectionKeyPath")]
     public async Task SecretFileFallbacksRefuseBeforeAnyReferencedFileIsRead(string key)
     {
         using var fixture = new SettingsFixture();
@@ -261,13 +262,68 @@ public sealed class PortableEnvironmentLoaderTests
             await File.ReadAllBytesAsync(otherFile, TestContext.CancellationToken).ConfigureAwait(false));
     }
 
+    [TestMethod]
+    public async Task ProtectedCookieKeysRemainGatewayOnlySnapshotValues()
+    {
+        using var fixture = new SettingsFixture();
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var config = await LoadAsync(fixture, EnvironmentValidationRole.Gateway).ConfigureAwait(false);
+        Assert.HasCount(1, config.Admin.DataProtectionKeys);
+        Assert.AreEqual(fixture.CookieKey.MasterKey, config.Admin.DataProtectionKeys[0].MasterKey, StringComparer.Ordinal);
+        var active = Path.Combine(fixture.Root.FullName, ".env");
+        var protectedBytes = await File.ReadAllBytesAsync(active, TestContext.CancellationToken).ConfigureAwait(false);
+        Assert.DoesNotContain(fixture.CookieKey.MasterKey, System.Text.Encoding.UTF8.GetString(protectedBytes), StringComparison.Ordinal);
+        await File.WriteAllTextAsync(active, "replaced-invalid-active", TestContext.CancellationToken).ConfigureAwait(false);
+        Assert.AreEqual(fixture.CookieKey.MasterKey, config.Admin.DataProtectionKeys[0].MasterKey, StringComparer.Ordinal);
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var failure = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+            LoadAsync(fixture, EnvironmentValidationRole.ApplicationWorker)).ConfigureAwait(false);
+        Assert.AreEqual("Worker configuration must not contain Gateway admin-cookie keys.", failure.Message, StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    public async Task ProtectedWorkerSecretsShareOneValidatedStartupSnapshot()
+    {
+        using var fixture = new SettingsFixture(includeCookieKeys: false);
+        using var signer = System.Security.Cryptography.RSA.Create(2048);
+        var signing = signer.ExportPkcs8PrivateKeyPem();
+        var encryption = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var old = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        const string connection = "DefaultEndpointsProtocol=https;AccountName=fixture;AccountKey=synthetic;BlobEndpoint=https://blob.example.test/";
+        fixture.Values["OAuth:EnableOAuth"] = "true";
+        fixture.Values["OAuth:EnableOpenIdConnect"] = "true";
+        fixture.Values["OAuth:SigningKey"] = signing;
+        fixture.Values["Mfa:EnableTotp"] = "true";
+        fixture.Values["Mfa:EncryptionKey"] = encryption;
+        fixture.Values["Messaging:Enabled"] = "true";
+        fixture.Values["Messaging:EncryptionKey"] = encryption;
+        fixture.Values["Messaging:DecryptionKeys:0:Id"] = "old";
+        fixture.Values["Messaging:DecryptionKeys:0:Key"] = old;
+        fixture.Values["ObjectStorage:ConnectionString"] = connection;
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var loaded = await LoadAsync(fixture, EnvironmentValidationRole.ApplicationWorker).ConfigureAwait(false);
+        var active = Path.Combine(fixture.Root.FullName, ".env");
+        var bytes = await File.ReadAllBytesAsync(active, TestContext.CancellationToken).ConfigureAwait(false);
+        var ciphertext = System.Text.Encoding.UTF8.GetString(bytes);
+        foreach (var secret in new[] { signing, encryption, old, connection })
+            Assert.DoesNotContain(secret, ciphertext, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(active, "later-invalid-document", TestContext.CancellationToken).ConfigureAwait(false);
+        Assert.AreEqual(signing, loaded.OAuth.SigningKey, StringComparer.Ordinal);
+        Assert.AreEqual(encryption, loaded.Mfa.EncryptionKey, StringComparer.Ordinal);
+        Assert.AreEqual(encryption, loaded.Messaging.EncryptionKey, StringComparer.Ordinal);
+        Assert.AreEqual(old, loaded.Messaging.DecryptionKeys.Single().Key, StringComparer.Ordinal);
+        Assert.AreEqual(connection, loaded.ObjectStorage.ConnectionString, StringComparer.Ordinal);
+        Assert.IsEmpty(loaded.Validate(role: EnvironmentValidationRole.ApplicationWorker));
+    }
+
     private Task<EnvironmentConfig> LoadAsync(
         SettingsFixture fixture,
         EnvironmentValidationRole role = EnvironmentValidationRole.Combined) =>
         PortableEnvironmentLoader.LoadFromDirectoryAsync(fixture.Root.FullName, role, TestContext.CancellationToken);
 
-    private sealed class SettingsFixture : IDisposable
+    private sealed class SettingsFixture(bool includeCookieKeys = true) : IDisposable
     {
+        internal DataProtectionKeyConfig CookieKey { get; } = PortableCookieKeyFixture.Create();
         internal DirectoryInfo Root { get; } = Directory.CreateTempSubdirectory("mk8-portable-settings-");
         // Reserved names and synthetic credentials are finite local parsing controls.
         internal Dictionary<string, string> Values { get; } = new(StringComparer.Ordinal)
@@ -286,7 +342,7 @@ public sealed class PortableEnvironmentLoaderTests
         internal Task WriteAsync(CancellationToken cancellationToken)
         {
             Values["Admin:AllowedNetworks:0"] = "127.0.0.1/32";
-            Values["Admin:DataProtectionKeyPath"] = Path.Combine(Root.FullName, "data-protection");
+            if (includeCookieKeys) PortableCookieKeyFixture.AddValues(Values, CookieKey);
             Values["Admin:AuditLogPath"] = Path.Combine(Root.FullName, "audit.jsonl");
             Values["Admin:HealthStatusPath"] = Path.Combine(Root.FullName, "health.json");
             var text = SupprocomSecretDocument.Serialize(

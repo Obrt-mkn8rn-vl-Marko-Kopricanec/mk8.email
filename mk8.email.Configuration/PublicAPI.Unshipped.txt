@@ -1,4 +1,54 @@
 #nullable enable
+mk8.email.Configuration.DataProtectionKeyConfig
+mk8.email.Configuration.DataProtectionKeyConfig.DataProtectionKeyConfig() -> void
+mk8.email.Configuration.DataProtectionKeyConfig.DecodeMasterKey() -> byte[]!
+mk8.email.Configuration.AdminConfig.DataProtectionKeys.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Configuration.DataProtectionKeyConfig!>!
+mk8.email.Configuration.AdminConfig.DataProtectionKeys.init -> void
+mk8.email.Configuration.DataProtectionKeyConfig.Id.get -> System.Guid
+mk8.email.Configuration.DataProtectionKeyConfig.Id.init -> void
+mk8.email.Configuration.DataProtectionKeyConfig.CreatedAt.get -> System.DateTimeOffset
+mk8.email.Configuration.DataProtectionKeyConfig.CreatedAt.init -> void
+mk8.email.Configuration.DataProtectionKeyConfig.ActivatesAt.get -> System.DateTimeOffset
+mk8.email.Configuration.DataProtectionKeyConfig.ActivatesAt.init -> void
+mk8.email.Configuration.DataProtectionKeyConfig.ExpiresAt.get -> System.DateTimeOffset
+mk8.email.Configuration.DataProtectionKeyConfig.ExpiresAt.init -> void
+mk8.email.Configuration.DataProtectionKeyConfig.RevokedAt.get -> System.DateTimeOffset?
+mk8.email.Configuration.DataProtectionKeyConfig.RevokedAt.init -> void
+mk8.email.Configuration.DataProtectionKeyConfig.MasterKey.get -> string!
+mk8.email.Configuration.DataProtectionKeyConfig.MasterKey.init -> void
+static mk8.email.Configuration.PortableEnvironmentLoader.LoadArchiveManagementAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Configuration.ManagementConfig!>!
+mk8.email.Configuration.ManagementConfig
+mk8.email.Configuration.ManagementConfig.ManagementConfig() -> void
+mk8.email.Configuration.ManagementConfig.RequireAccountPassword() -> string!
+mk8.email.Configuration.ManagementConfig.RequireTotpCode() -> string!
+mk8.email.Configuration.ManagementConfig.RequirePgDumpExecutable() -> string!
+mk8.email.Configuration.ManagementConfig.RequirePgRestoreExecutable() -> string!
+mk8.email.Configuration.ManagementConfig.CreateArchiveVerifier() -> System.Security.Cryptography.RSA!
+mk8.email.Configuration.EnvironmentConfig.Management.get -> mk8.email.Configuration.ManagementConfig!
+mk8.email.Configuration.EnvironmentConfig.Management.init -> void
+static mk8.email.Configuration.PortableEnvironmentLoader.LoadManagementAsync(mk8.email.Configuration.EnvironmentValidationRole role = mk8.email.Configuration.EnvironmentValidationRole.ApplicationWorker, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Configuration.EnvironmentConfig!>!
+mk8.email.Configuration.ManagementConfig.AccountPassword.get -> string?
+mk8.email.Configuration.ManagementConfig.AccountPassword.init -> void
+mk8.email.Configuration.ManagementConfig.TotpCode.get -> string?
+mk8.email.Configuration.ManagementConfig.TotpCode.init -> void
+mk8.email.Configuration.ManagementConfig.PgDumpExecutablePath.get -> string?
+mk8.email.Configuration.ManagementConfig.PgDumpExecutablePath.init -> void
+mk8.email.Configuration.ManagementConfig.PgRestoreExecutablePath.get -> string?
+mk8.email.Configuration.ManagementConfig.PgRestoreExecutablePath.init -> void
+mk8.email.Configuration.ManagementConfig.ArchiveConnectionString.get -> string?
+mk8.email.Configuration.ManagementConfig.ArchiveConnectionString.init -> void
+mk8.email.Configuration.ManagementConfig.ArchiveContainerName.get -> string?
+mk8.email.Configuration.ManagementConfig.ArchiveContainerName.init -> void
+mk8.email.Configuration.ManagementConfig.ArchiveVerificationKeyPem.get -> string?
+mk8.email.Configuration.ManagementConfig.ArchiveVerificationKeyPem.init -> void
+mk8.email.Configuration.ManagementConfig.WakeDatabaseHost.get -> string?
+mk8.email.Configuration.ManagementConfig.WakeDatabaseHost.init -> void
+mk8.email.Configuration.ManagementConfig.WakeDatabaseName.get -> string?
+mk8.email.Configuration.ManagementConfig.WakeDatabaseName.init -> void
+mk8.email.Configuration.ManagementConfig.WakeDatabaseUsername.get -> string?
+mk8.email.Configuration.ManagementConfig.WakeDatabaseUsername.init -> void
+mk8.email.Configuration.ManagementConfig.WakeDatabasePort.get -> int
+mk8.email.Configuration.ManagementConfig.WakeDatabasePort.init -> void
 mk8.email.Configuration.WakeConfig
 mk8.email.Configuration.WakeConfig.WakeConfig() -> void
 mk8.email.Configuration.WakeConfig.BuildConnectionString() -> string!

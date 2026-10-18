@@ -18,9 +18,10 @@ internal sealed class DistributedArchiveIndexFixture : IDisposable
     private readonly HttpClient _client;
     private readonly byte[] _cipher = "owned signed index fixture, not an encrypted backup"u8.ToArray();
     private byte[] _signature = [];
+    private RSA? _verifier;
     internal DirectoryInfo Root { get; } = Directory.CreateTempSubdirectory("mk8-archive-index-");
     internal string Destination => Path.Combine(Root.FullName, "destination");
-    internal string Verifier => Path.Combine(Root.FullName, "verification.pem");
+    internal RSA Verifier => _verifier ?? throw new InvalidOperationException("The fixture verifier has not been prepared.");
     internal BlobServiceClient Service { get; }
     internal List<string> Requests => _handler.Requests;
     internal bool ConditionsMatched => _handler.ConditionsMatched;
@@ -34,14 +35,15 @@ internal sealed class DistributedArchiveIndexFixture : IDisposable
             new BlobClientOptions { Transport = new HttpClientTransport(_client) });
     }
 
-    internal async Task PrepareAsync(int headLength, int bodyLength, CancellationToken token)
+    internal Task PrepareAsync(int headLength, int bodyLength, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Private archive fixtures require Linux.");
         File.SetUnixFileMode(Root.FullName, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         using var signer = RSA.Create(3072);
         _signature = signer.SignHash(SHA256.HashData(_cipher), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
-        await File.WriteAllTextAsync(Verifier, signer.ExportSubjectPublicKeyInfoPem(), token).ConfigureAwait(false);
-        File.SetUnixFileMode(Verifier, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        _verifier = RSA.Create();
+        _verifier.ImportSubjectPublicKeyInfo(signer.ExportSubjectPublicKeyInfo(), out _);
         var index = JsonSerializer.SerializeToUtf8Bytes(new
         {
             SchemaVersion = 1,
@@ -56,6 +58,7 @@ internal sealed class DistributedArchiveIndexFixture : IDisposable
         _handler.Objects.Add("complete.json", new ObjectBytes(bytes, headLength == 0 ? bytes.Length : headLength));
         _handler.Objects.Add("snapshot.tar.age", new ObjectBytes(_cipher, _cipher.Length));
         _handler.Objects.Add("snapshot.tar.age.sig", new ObjectBytes(_signature, _signature.Length));
+        return Task.CompletedTask;
     }
 
     internal async Task AssertFetchedAsync(CancellationToken token)
@@ -84,9 +87,13 @@ internal sealed class DistributedArchiveIndexFixture : IDisposable
         }
         finally
         {
-            _handler.Dispose();
+            try { _handler.Dispose(); }
+            finally
+            {
+                try { _verifier?.Dispose(); }
+                finally { Root.Delete(recursive: true); }
+            }
         }
-        Root.Delete(recursive: true);
         GC.SuppressFinalize(this);
     }
 

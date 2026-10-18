@@ -25,6 +25,9 @@
     <AdditionalFiles Include="BannedSymbols.txt" />
     <None Include="../mk8.email.Gateway/Environment/.env.template" Link="RoleTemplates/Gateway.env.template" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../mk8.email.Application.Worker/Environment/.env.template" Link="RoleTemplates/Worker.env.template" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../mk8.email.CLI/Environment/.env.template" Link="RoleTemplates/CLI.env.template" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../mk8.email.CLI/Environment/archive.env.template" Link="RoleTemplates/Archive.env.template" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../mk8.email.Wake/Environment/.env.template" Link="RoleTemplates/Wake.env.template" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

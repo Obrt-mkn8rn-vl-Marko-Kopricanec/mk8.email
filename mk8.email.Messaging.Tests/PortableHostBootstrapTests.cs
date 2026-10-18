@@ -128,6 +128,7 @@ internal sealed class PortableHostBootstrapTests
     [TestMethod]
     [DataRow("Gateway")]
     [DataRow("Worker")]
+    [DataRow("CLI")]
     public async Task PublishedTemplateKeysBindToTheActualRoleSchema(string role)
     {
         Assert.IsNotNull(TestContext);
@@ -145,7 +146,11 @@ internal sealed class PortableHostBootstrapTests
                 "Database:Host" => "database.example.test",
                 "Database:Name" => "fixture_database",
                 "Http:Port" => "12345",
+                "Database:Port" or "Management:WakeDatabasePort" => "5432",
                 "Messaging:Enabled" => "true",
+                "Admin:DataProtectionKeys:0:Id" => "e726fa39-7db4-4f44-9247-a87450dc854f",
+                "Admin:DataProtectionKeys:0:CreatedAt" or "Admin:DataProtectionKeys:0:ActivatesAt"
+                    or "Admin:DataProtectionKeys:0:ExpiresAt" => "2026-01-01T00:00:00+00:00",
                 _ => "fixture",
             })));
         var bound = source.Get<EnvironmentConfig>(options => options.ErrorOnUnknownConfiguration = true);

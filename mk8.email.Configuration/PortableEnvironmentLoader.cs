@@ -24,13 +24,55 @@ public static class PortableEnvironmentLoader
             throw new ArgumentOutOfRangeException(nameof(role));
         var config = await LoadSnapshotAsync<EnvironmentConfig>(directory, cancellationToken, afterActivePrecheck)
             .ConfigureAwait(false);
+        if (config.Management.HasValues)
+            throw new InvalidOperationException("Service roles must not contain management-only configuration values.");
+        ValidateEnvironment(config, role);
+        return config;
+    }
 
+    public static Task<EnvironmentConfig> LoadManagementAsync(
+        EnvironmentValidationRole role = EnvironmentValidationRole.ApplicationWorker,
+        CancellationToken cancellationToken = default) =>
+        LoadManagementFromDirectoryAsync(Path.Combine(AppContext.BaseDirectory, "Environment"), role, cancellationToken);
+
+    internal static async Task<EnvironmentConfig> LoadManagementFromDirectoryAsync(string directory,
+        EnvironmentValidationRole role, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        if (!Enum.IsDefined(role))
+            throw new ArgumentOutOfRangeException(nameof(role));
+        var config = await LoadSnapshotAsync<EnvironmentConfig>(directory, cancellationToken).ConfigureAwait(false);
+        ValidateEnvironment(config, role);
+        return config;
+    }
+
+    public static Task<ManagementConfig> LoadArchiveManagementAsync(CancellationToken cancellationToken = default) =>
+        LoadArchiveManagementFromDirectoryAsync(Path.Combine(AppContext.BaseDirectory, "Environment"), cancellationToken);
+
+    internal static async Task<ManagementConfig> LoadArchiveManagementFromDirectoryAsync(string directory, CancellationToken cancellationToken)
+    {
+        // An archive-only CLI installation needs no database, application-account
+        // password or service credentials. It has its own fixed role collection.
+        var config = await LoadSnapshotAsync<ManagementConfig>(directory, cancellationToken).ConfigureAwait(false);
+        if (config.AccountPassword is not null || config.TotpCode is not null || config.PgDumpExecutablePath is not null
+            || config.PgRestoreExecutablePath is not null || config.WakeDatabaseHost is not null
+            || config.WakeDatabasePort != 0 || config.WakeDatabaseName is not null || config.WakeDatabaseUsername is not null)
+        {
+            throw new InvalidOperationException("An archive-only collection must not contain unrelated management credentials or service settings.");
+        }
+        return config;
+    }
+
+    private static void ValidateEnvironment(EnvironmentConfig config, EnvironmentValidationRole role)
+    {
         RefuseSecretFileFallbacks(config);
         if (role is EnvironmentValidationRole.ApplicationWorker
             && (config.Tls.CertificatePkcs12 is not null || config.Tls.CertificatePassword is not null))
         {
             throw new InvalidOperationException("Worker configuration must not contain Gateway TLS material.");
         }
+        if (role is EnvironmentValidationRole.ApplicationWorker && config.Admin.DataProtectionKeys.Count != 0)
+            throw new InvalidOperationException("Worker configuration must not contain Gateway admin-cookie keys.");
         if (role is EnvironmentValidationRole.Gateway
             && (!string.IsNullOrEmpty(config.OAuth.SigningKey)
                 || !string.IsNullOrEmpty(config.Mfa.EncryptionKey)
@@ -43,7 +85,6 @@ public static class PortableEnvironmentLoader
         var errors = config.Validate(isDevelopment: false, role);
         if (errors.Count > 0)
             throw new InvalidOperationException("The portable configuration is not valid: " + string.Join("; ", errors));
-        return config;
     }
 
     public static Task<WakeConfig> LoadWakeAsync(CancellationToken cancellationToken = default) =>
@@ -114,7 +155,8 @@ public static class PortableEnvironmentLoader
             || config.ObjectStorage.ConnectionStringFile is not null
             || config.Tls.CertificatePath is not null
             || config.Tls.CertificateKeyPath is not null
-            || config.Dkim.PrivateKeyPath is not null)
+            || config.Dkim.PrivateKeyPath is not null
+            || !string.IsNullOrEmpty(config.Admin.DataProtectionKeyPath))
         {
             throw new InvalidOperationException(
                 "Separate secret-file settings are not supported; resolve values through Supprocom.Secrets.");

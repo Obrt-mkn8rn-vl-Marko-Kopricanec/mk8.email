@@ -1,6 +1,5 @@
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.DataProtection;
 using mk8.email.Configuration;
 using mk8.email.Gateway;
 using mk8.email.Contracts.Mail;
@@ -114,9 +113,7 @@ builder.Services.AddSingleton(environmentConfig.Admin);
 builder.Services.AddSingleton<AdminNetworkPolicy>();
 builder.Services.AddSingleton<IAdminAuditLog, AdminAuditLog>();
 
-builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo(environmentConfig.Admin.DataProtectionKeyPath))
-    .SetApplicationName("mk8.email.admin");
+GatewayDataProtection.AddSnapshot(builder.Services, environmentConfig.Admin);
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -163,6 +160,7 @@ builder.Services.AddRazorPages(options =>
 
 var app = builder.Build();
 await using var appLifetime = app.ConfigureAwait(false);
+GatewayDataProtection.RequireAvailable(app.Services);
 
 GatewayHttpPipeline.Configure(app);
 

@@ -316,7 +316,7 @@ internal sealed partial class NativeHostStartupTests
             Admin = new AdminConfig
             {
                 AllowedNetworks = ["127.0.0.0/8"],
-                DataProtectionKeyPath = Path.Combine(directory, "keys"),
+                DataProtectionKeys = [PortableCookieKeyFixture.Create()],
                 AuditLogPath = Path.Combine(directory, "audit.jsonl"),
                 HealthStatusPath = Path.Combine(directory, "status.json"),
             },

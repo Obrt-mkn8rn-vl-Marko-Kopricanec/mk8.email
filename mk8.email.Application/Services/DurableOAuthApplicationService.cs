@@ -60,17 +60,28 @@ internal sealed class DurableOAuthApplicationService(EmailDbContext database,
             Pooling = false,
             Enlist = false,
         };
+        var outcome = new DurableOAuthOutcome(operationId);
         var lockConnection = new NpgsqlConnection(connectionString.ConnectionString);
-        await using var lockLifetime = lockConnection.ConfigureAwait(false);
-        await AcquireOperationLockAsync(lockConnection, operationId, token).ConfigureAwait(false);
-        return await ExecuteTransactionAsync(operationId, purpose, input, credentialId, code, invoke, token).ConfigureAwait(false);
+        return await outcome.OwnAsync(lockConnection, async () =>
+        {
+            await AcquireOperationLockAsync(lockConnection, operationId, token).ConfigureAwait(false);
+            return await ExecuteTransactionAsync(operationId, purpose, input, credentialId, code, invoke, outcome, token).ConfigureAwait(false);
+        }).ConfigureAwait(false);
     }
 
     private async Task<OAuthTokenApplicationResult> ExecuteTransactionAsync<T>(Guid operationId, string purpose,
-        T input, Guid credentialId, bool code, Func<CancellationToken, Task<OAuthTokenPair?>> invoke, CancellationToken token)
+        T input, Guid credentialId, bool code, Func<CancellationToken, Task<OAuthTokenPair?>> invoke,
+        DurableOAuthOutcome outcome, CancellationToken token)
     {
         var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, token).ConfigureAwait(false);
-        await using var transactionLifetime = transaction.ConfigureAwait(false);
+        return await outcome.OwnAsync(transaction, () => ExecuteReceiptAsync(
+            operationId, purpose, input, credentialId, code, invoke, transaction, outcome, token)).ConfigureAwait(false);
+    }
+
+    private async Task<OAuthTokenApplicationResult> ExecuteReceiptAsync<T>(Guid operationId, string purpose,
+        T input, Guid credentialId, bool code, Func<CancellationToken, Task<OAuthTokenPair?>> invoke,
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction, DurableOAuthOutcome outcome, CancellationToken token)
+    {
         // An operation receipt outlives the consumed credential's ordinary
         // retention. Recover its bound identity before requiring that row.
         var userId = await database.ApplicationOperationReceipts
@@ -90,8 +101,10 @@ internal sealed class DurableOAuthApplicationService(EmailDbContext database,
         var replay = await receipts.FindLockedAsync(key, token).ConfigureAwait(false);
         if (replay is not null)
         {
-            return JsonSerializer.Deserialize<OAuthTokenApplicationResult>(replay.Result.Span, JsonOptions)
+            var result = JsonSerializer.Deserialize<OAuthTokenApplicationResult>(replay.Result.Span, JsonOptions)
                 ?? throw new InvalidOperationException("The OAuth result receipt is incomplete.");
+            outcome.RequireReceiptRecovery();
+            return result;
         }
 
         var marker = _effects.Mark();
@@ -104,6 +117,9 @@ internal sealed class DurableOAuthApplicationService(EmailDbContext database,
             await receipts.SaveAsync(key, new ApplicationReceiptContent(
                 JsonSerializer.SerializeToUtf8Bytes(result, JsonOptions), []), token).ConfigureAwait(false);
             commitAttempted = true;
+            // This state is set BEFORE the actual commit. A failed commit ACK
+            // cannot distinguish rollback from a committed encrypted receipt.
+            outcome.RequireReceiptRecovery();
             await transaction.CommitAsync(token).ConfigureAwait(false);
             await _effects.CommitAsync(marker).ConfigureAwait(false);
             return result;

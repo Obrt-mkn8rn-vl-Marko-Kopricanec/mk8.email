@@ -1,6 +1,9 @@
 using System.Text;
 using System.Text.Json;
+using System.Data.Common;
+using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application;
@@ -25,6 +28,46 @@ internal sealed class DurableOAuthReplayTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public TestContext? TestContext { get; set; }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    [Timeout(90_000, CooperativeCancellation = true)]
+    public async Task ActualWorkerRecoversSqlCommittedReceiptAfterCommitObservationFault(bool redeemCode)
+    {
+        Assert.IsNotNull(TestContext);
+        var token = TestContext.CancellationToken;
+        var fixture = await Rig.CreateAsync(token).ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var request = await fixture.CreateRequestAsync(redeemCode, token).ConfigureAwait(false);
+        await fixture.Bus.EnqueueAsync(request, token).ConfigureAwait(false);
+        var lease = await fixture.Bus.WaitForRequestAsync("worker:commit-observation", token).ConfigureAwait(false);
+        fixture.CommitFault.Arm();
+        var observing = new CompletionFaultConsumer(fixture.Bus, acknowledged: false);
+        await fixture.ProcessWithWorkerAsync(observing, lease, token).ConfigureAwait(false);
+        Assert.AreEqual(1, fixture.CommitFault.Faults);
+        Assert.AreEqual(0, observing.CompletionCalls);
+        Assert.AreEqual(0, observing.FailureCalls);
+        var pending = await fixture.Bus.GetAsync(request.Id, token).ConfigureAwait(false);
+        Assert.IsNotNull(pending);
+        Assert.AreEqual("processing", pending.State, StringComparer.Ordinal);
+        var original = await fixture.ReadOriginalReceiptAsync(request, redeemCode, token).ConfigureAwait(false);
+        var issued = JsonSerializer.Deserialize<OAuthTokenApplicationResult>(original, JsonOptions)?.Token;
+        Assert.IsNotNull(issued);
+        await fixture.AssertEncryptedReceiptAsync(request.Id, issued, token).ConfigureAwait(false);
+        await Task.Delay(TimeSpan.FromSeconds(6), token).ConfigureAwait(false);
+        var reclaimed = await fixture.Bus.WaitForRequestAsync("worker:commit-recovery", token).ConfigureAwait(false);
+        Assert.AreEqual(request.Id, reclaimed.Request.Id);
+        await fixture.ProcessWithWorkerAsync(fixture.Bus, reclaimed, token).ConfigureAwait(false);
+        var response = await fixture.Bus.WaitForResponseAsync(request.Id, request.Deadline, token).ConfigureAwait(false);
+        Assert.AreSequenceEqual(original, response.Payload);
+        Assert.IsNotNull(await fixture.AuthenticateAsync(issued.AccessToken, token).ConfigureAwait(false));
+        var database = fixture.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync(token).ConfigureAwait(false));
+        Assert.AreEqual(redeemCode ? 2 : 4, await database.OAuthTokens.CountAsync(token).ConfigureAwait(false));
+        Assert.AreEqual(1, fixture.CommitFault.Faults);
+    }
 
     [TestMethod]
     [DataRow(false, false)]
@@ -136,6 +179,7 @@ internal sealed class DurableOAuthReplayTests
 
     private sealed class Rig(PostgresTestDatabase server) : IAsyncDisposable
     {
+        internal CommitObservationFault CommitFault { get; } = new();
         private readonly PostgresTestDatabase _server = server;
         private NpgsqlDataSource? _source;
         private ServiceProvider? _services;
@@ -190,7 +234,7 @@ internal sealed class DurableOAuthReplayTests
             _services = new ServiceCollection().AddLogging().AddSingleton(environment)
                 .AddSingleton<ILargeObjectStore>(objects)
                 .AddSingleton<IStoredContentProtector>(new MessagingStoredContentProtector(_protector))
-                .AddDbContext<EmailDbContext>(options => options.UseNpgsql(_server.ConnectionString))
+                .AddDbContext<EmailDbContext>(options => options.UseNpgsql(_server.ConnectionString).AddInterceptors(CommitFault))
                 .AddApplication().BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
             _bus = new PostgresApplicationBus(_source, _protector, new PostgresMessagingOptions
             { LeaseDuration = TimeSpan.FromSeconds(5), NotificationFallbackInterval = TimeSpan.FromMilliseconds(100) });
@@ -229,6 +273,23 @@ internal sealed class DurableOAuthReplayTests
             var scope = Services.CreateAsyncScope();
             await using var scopeLifetime = scope.ConfigureAwait(false);
             return await scope.ServiceProvider.GetRequiredService<IApplicationRequestDispatcher>().DispatchAsync(request, token).ConfigureAwait(false);
+        }
+
+        internal async Task<byte[]> ReadOriginalReceiptAsync(ApplicationRequest request, bool code, CancellationToken token)
+        {
+            var scope = Services.CreateAsyncScope();
+            await using var scopeLifetime = scope.ConfigureAwait(false);
+            var context = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var transaction = await context.Database.BeginTransactionAsync(token).ConfigureAwait(false);
+            await using var transactionLifetime = transaction.ConfigureAwait(false);
+            // This fixture creates canonical JSON with the SAME Web serializer
+            // as the admitted typed coordinator input, not arbitrary wire JSON.
+            var key = new ApplicationReceiptKey(request.Id, 0, userId, code ? "oauth.redeem" : "oauth.refresh",
+                Convert.ToHexStringLower(SHA256.HashData(request.Payload)));
+            var receipt = await scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>()
+                .FindLockedAsync(key, token).ConfigureAwait(false);
+            Assert.IsNotNull(receipt);
+            return receipt.Result.ToArray();
         }
 
         internal async Task<AuthenticatedMailUser?> AuthenticateAsync(string accessToken, CancellationToken token)
@@ -285,6 +346,26 @@ internal sealed class DurableOAuthReplayTests
                     await _server.DisposeAsync().ConfigureAwait(false);
                 }
             }
+        }
+    }
+
+    private sealed class CommitObservationFault : DbTransactionInterceptor
+    {
+        private int _armed;
+        private int _faults;
+        internal int Faults => Volatile.Read(ref _faults);
+        internal void Arm() => Volatile.Write(ref _armed, 1);
+        public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            // Actual EF API callback AFTER DbTransaction.CommitAsync; no SQL
+            // suppression or fabricated receipt. The ordinary fault is one-shot.
+            if (Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                Interlocked.Increment(ref _faults);
+                return Task.FromException(new IOException("Controlled observation fault after actual SQL commit."));
+            }
+            return Task.CompletedTask;
         }
     }
 

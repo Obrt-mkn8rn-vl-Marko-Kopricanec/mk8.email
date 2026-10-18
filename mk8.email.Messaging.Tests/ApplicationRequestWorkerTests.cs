@@ -22,6 +22,61 @@ namespace mk8.email.Messaging.Tests;
 internal sealed class ApplicationRequestWorkerTests
 {
     [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(false, true)]
+    [DataRow(true, false)]
+    [DataRow(true, true)]
+    public async Task UncertainCommittedOutcomeIsRetryableOnlyForItsExactOperation(bool matches, bool scopeFault)
+    {
+        var request = NewRequest();
+        var original = new IOException("Controlled SQL commit acknowledgment uncertainty.");
+        var recovery = new DurableOAuthRecoveryRequiredException(matches ? request.Id : Guid.CreateVersion7(), original);
+        var disposal = new InvalidOperationException("Controlled secondary scope retirement failure.");
+        var requests = new StubRequestConsumer();
+        var log = new PublicationLog();
+        var services = new ServiceCollection().AddScoped(_ => new FailingScopeOwner(scopeFault ? disposal : null))
+            .AddScoped<IApplicationRequestDispatcher>(provider => new RecoveryDispatcher(recovery,
+                provider.GetRequiredService<FailingScopeOwner>())).BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
+        using var worker = new ApplicationRequestWorker(requests, services.GetRequiredService<IServiceScopeFactory>(),
+            new ApplicationWorkerIdentity("recovery@test", TimeSpan.FromMinutes(1)), log);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await worker.ProcessLeaseAsync(new ApplicationRequestLease(request, "recovery@test", DateTimeOffset.UtcNow.AddMinutes(2), 1),
+            timeout.Token).ConfigureAwait(false);
+        Assert.AreEqual(matches ? 0 : 1, requests.FailureCalls);
+        Assert.AreEqual(0, requests.CompletionCalls);
+        if (matches)
+        {
+            Assert.IsNotNull(log.Failure);
+            var failures = log.Failure is AggregateException inventory
+                ? inventory.Flatten().InnerExceptions : new AggregateException(log.Failure).InnerExceptions;
+            Assert.Contains(recovery, failures);
+            if (scopeFault) Assert.Contains(disposal, failures);
+            else Assert.AreSame(recovery, log.Failure);
+        }
+    }
+
+    private sealed class RecoveryDispatcher : IApplicationRequestDispatcher
+    {
+        private readonly DurableOAuthRecoveryRequiredException _failure;
+        internal RecoveryDispatcher(DurableOAuthRecoveryRequiredException failure, FailingScopeOwner owner)
+        {
+            _failure = failure;
+            ArgumentNullException.ThrowIfNull(owner); // Resolving this dependency admits it to the SAME actual scope.
+        }
+        public Task<ApplicationResponse> DispatchAsync(ApplicationRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromException<ApplicationResponse>(_failure);
+    }
+
+    private sealed class FailingScopeOwner(Exception? failure) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (failure is not null) throw failure;
+        }
+    }
+
+    [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
     public async Task CompletionFailureNeverTerminallyFailsSuccessfullyDispatchedWork(bool acknowledged)

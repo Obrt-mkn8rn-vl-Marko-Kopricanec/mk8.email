@@ -16,6 +16,27 @@ internal sealed class AzureBlobEndpointAdmissionTests
     private const string SyntheticKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
     [TestMethod]
+    [DataRow("http://account.blob.example.test/")]
+    [DataRow("http://localhost:10000/account")]
+    [DataRow("http://192.0.2.17:10000/account")]
+    [DataRow("http://[2001:db8::17]:10000/account")]
+    public void NonliteralOrNonloopbackHttpRefusesBeforeAnyBlobRequest(string endpoint)
+    {
+        // TEST-NET and documentation IPv6 values classify non-loopback; no
+        // address is resolved, bound, contacted or approved by these controls.
+        var transport = new NoNetworkTransport();
+        var service = CreateService(endpoint, transport);
+        var before = service.Uri;
+        var error = Assert.ThrowsExactly<ArgumentException>(() => new AzureBlobLargeObjectStore(service,
+            new AzureBlobLargeObjectStoreOptions { ContainerName = Container, CreateContainerIfMissing = true }));
+        Assert.AreEqual("serviceClient", error.ParamName, StringComparer.Ordinal);
+        Assert.StartsWith("Azure Blob transport requires HTTPS or explicit literal loopback HTTP.", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(endpoint, error.Message, StringComparison.Ordinal);
+        Assert.AreEqual(before, service.Uri);
+        Assert.AreEqual(0, transport.Requests);
+    }
+
+    [TestMethod]
     [DataRow("https://blob.example.test/account")]
     [DataRow("https://blob.example.test/account/")]
     [DataRow("https://blob.example.test/owned-objects")]

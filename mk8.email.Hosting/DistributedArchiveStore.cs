@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -171,6 +172,14 @@ public static partial class DistributedArchiveStore
     private static BlobContainerClient GetAdmittedContainer(BlobServiceClient service, string containerName)
     {
         var container = service.GetBlobContainerClient(containerName);
+        var endpoint = container.Uri;
+        var loopback = IPAddress.TryParse(endpoint.Host, out var literal) && IPAddress.IsLoopback(literal);
+        if (!string.IsNullOrEmpty(endpoint.UserInfo) || !string.IsNullOrEmpty(endpoint.Fragment)
+            || (!string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal)
+                && !(loopback && string.Equals(endpoint.Scheme, Uri.UriSchemeHttp, StringComparison.Ordinal))))
+        {
+            throw new ArgumentException("Archive transport requires HTTPS or explicit literal loopback HTTP.", nameof(service));
+        }
         // Object-client construction reparses this URI. Never publish or fetch
         // an archive when a DNS account path would discard its configured container.
         var address = new BlobUriBuilder(container.Uri, trimBlobNameSlashes: false);

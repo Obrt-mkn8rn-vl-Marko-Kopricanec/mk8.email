@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.RegularExpressions;
 using Azure;
 using Azure.Storage.Blobs;
@@ -21,6 +22,14 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
         _options = options ?? new AzureBlobLargeObjectStoreOptions();
         AzureBlobLargeObjectStoreOptions.Validate(_options);
         _container = serviceClient.GetBlobContainerClient(_options.ContainerName);
+        var endpoint = _container.Uri;
+        var loopback = IPAddress.TryParse(endpoint.Host, out var literal) && IPAddress.IsLoopback(literal);
+        if (!string.IsNullOrEmpty(endpoint.UserInfo) || !string.IsNullOrEmpty(endpoint.Fragment)
+            || (!string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal)
+                && !(loopback && string.Equals(endpoint.Scheme, Uri.UriSchemeHttp, StringComparison.Ordinal))))
+        {
+            throw new ArgumentException("Azure Blob transport requires HTTPS or explicit literal loopback HTTP.", nameof(serviceClient));
+        }
         // The SDK reparses this URI when constructing object clients. An ambiguous
         // account path on a DNS endpoint can otherwise discard the configured container.
         var address = new BlobUriBuilder(_container.Uri, trimBlobNameSlashes: false);

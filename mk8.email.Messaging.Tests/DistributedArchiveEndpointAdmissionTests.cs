@@ -16,6 +16,35 @@ internal sealed class DistributedArchiveEndpointAdmissionTests
     public TestContext? TestContext { get; set; }
 
     [TestMethod]
+    [DataRow(false, "http://account.blob.example.test/")]
+    [DataRow(true, "http://account.blob.example.test/")]
+    [DataRow(false, "http://localhost:10000/account")]
+    [DataRow(true, "http://localhost:10000/account")]
+    [DataRow(false, "http://192.0.2.17:10000/account")]
+    [DataRow(true, "http://192.0.2.17:10000/account")]
+    [DataRow(false, "http://[2001:db8::17]:10000/account")]
+    [DataRow(true, "http://[2001:db8::17]:10000/account")]
+    public async Task NonliteralOrNonloopbackHttpRefusesBeforeArchiveRequestsOrStaging(bool fetch, string endpoint)
+    {
+        RequireLinux();
+        Assert.IsNotNull(TestContext);
+        using var fixture = new ArchiveFixture();
+        await fixture.PrepareAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var transport = new StoppedTransport();
+        var service = CreateService(endpoint, transport);
+        var before = service.Uri;
+        var error = await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+            InvokeAsync(fetch, service, fixture, TestContext.CancellationToken)).ConfigureAwait(false);
+        Assert.AreEqual("service", error.ParamName, StringComparer.Ordinal);
+        Assert.StartsWith("Archive transport requires HTTPS or explicit literal loopback HTTP.", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(endpoint, error.Message, StringComparison.Ordinal);
+        Assert.AreEqual(before, service.Uri);
+        Assert.AreEqual(0, transport.Requests);
+        Assert.IsFalse(Path.Exists(fixture.Destination));
+        Assert.HasCount(1, Directory.EnumerateFileSystemEntries(fixture.Root.FullName));
+    }
+
+    [TestMethod]
     [DataRow(false, "https://blob.example.test/account")]
     [DataRow(true, "https://blob.example.test/account")]
     [DataRow(false, "https://blob.example.test/account/")]

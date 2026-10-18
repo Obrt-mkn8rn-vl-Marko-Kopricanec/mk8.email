@@ -332,7 +332,7 @@ internal sealed class ManageSieveProtocolTests
             },
             Tls = new TlsConfig
             {
-                CertificatePath = _certificatePath,
+                CertificatePkcs12 = Convert.ToBase64String(File.ReadAllBytes(_certificatePath)),
             },
             Limits = new LimitsConfig
             {

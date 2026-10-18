@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using mk8.email.Configuration;
 
 namespace mk8.email.Infrastructure.Tests;
@@ -10,14 +12,19 @@ namespace mk8.email.Infrastructure.Tests;
 public sealed class EnvironmentConfigTests
 {
     private string _testDirectory = null!;
-    private string _certificatePath = null!;
+    private string _certificatePkcs12 = null!;
+    private string _dkimPrivateKeyPem = null!;
 
     [TestInitialize]
     public void Initialize()
     {
         _testDirectory = Path.Combine(Path.GetTempPath(), $"mk8email-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_testDirectory);
-        _certificatePath = WriteFile("certificate.pem", "test certificate");
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=mail.example.test", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        _certificatePkcs12 = Convert.ToBase64String(certificate.Export(X509ContentType.Pkcs12));
+        _dkimPrivateKeyPem = key.ExportPkcs8PrivateKeyPem();
     }
 
     [TestCleanup]
@@ -319,10 +326,9 @@ public sealed class EnvironmentConfigTests
     [TestMethod]
     public void GatewayDoesNotRequireApplicationOnlyDkimPrivateKey()
     {
-        var missingWorkerKey = Path.Combine(_testDirectory, "worker-only-dkim-key");
         var configuration = CreateValidConfiguration(
             enableDkimSigning: true,
-            dkimPrivateKeyPath: missingWorkerKey);
+            dkimPrivateKeyPem: string.Empty);
         var configurationPath = WriteFile(
             "mk8email-gateway-with-dkim.config.json",
             JsonSerializer.Serialize(configuration));
@@ -336,7 +342,7 @@ public sealed class EnvironmentConfigTests
             EnvironmentLoader.LoadFromFile(
                 configurationPath,
                 role: EnvironmentValidationRole.ApplicationWorker));
-        StringAssert.Contains(exception.Message, "Dkim.PrivateKeyPath", StringComparison.Ordinal);
+        StringAssert.Contains(exception.Message, "Dkim.PrivateKeyPem", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -515,7 +521,7 @@ public sealed class EnvironmentConfigTests
         bool enableImap = true,
         bool enableSpfCheck = false,
         bool enableDkimSigning = false,
-        string? dkimPrivateKeyPath = null,
+        string? dkimPrivateKeyPem = null,
         string dkimSelector = "default",
         string rspamdEndpoint = "http://127.0.0.1:11333/checkv2",
         int queueMaxAttempts = 20,
@@ -632,11 +638,11 @@ public sealed class EnvironmentConfigTests
             },
             Tls = new TlsConfig
             {
-                CertificatePath = _certificatePath,
+                CertificatePkcs12 = _certificatePkcs12,
             },
             Dkim = new DkimConfig
             {
-                PrivateKeyPath = dkimPrivateKeyPath ?? (enableDkimSigning ? _certificatePath : null),
+                PrivateKeyPem = dkimPrivateKeyPem ?? (enableDkimSigning ? _dkimPrivateKeyPem : null),
                 Selector = dkimSelector,
                 EnableSigning = enableDkimSigning,
             },

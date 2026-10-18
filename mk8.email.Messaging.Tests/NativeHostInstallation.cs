@@ -90,7 +90,8 @@ internal static class NativeHostInstallation
         }
         else if (value.ValueKind != JsonValueKind.Null)
         {
-            if (role == EnvironmentValidationRole.Gateway && prefix is "OAuth:SigningKey" or "Mfa:EncryptionKey") return;
+            if (role == EnvironmentValidationRole.Gateway && prefix is "OAuth:SigningKey" or "Mfa:EncryptionKey" or "Dkim:PrivateKeyPem") return;
+            if (role == EnvironmentValidationRole.ApplicationWorker && prefix.StartsWith("Tls:", StringComparison.Ordinal)) return;
             var scalar = value.ValueKind == JsonValueKind.String
                 ? value.GetString() ?? throw new InvalidDataException("A string setting unexpectedly contained null.")
                 : value.GetRawText();

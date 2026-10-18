@@ -39,12 +39,10 @@ internal static class TestCertificateFactory
         return path;
     }
 
-    public static TestDkimKey CreateDkimKey(string directory)
+    public static TestDkimKey CreateDkimKey()
     {
         using var key = RSA.Create(2048);
-        var privateKeyPath = Path.Combine(directory, "dkim-private.pem");
-        File.WriteAllText(privateKeyPath, key.ExportPkcs8PrivateKeyPem());
         var publicKey = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
-        return new TestDkimKey(privateKeyPath, $"v=DKIM1; k=rsa; p={publicKey}");
+        return new TestDkimKey(key.ExportPkcs8PrivateKeyPem(), $"v=DKIM1; k=rsa; p={publicKey}");
     }
 }

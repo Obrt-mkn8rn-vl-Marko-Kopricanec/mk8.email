@@ -242,7 +242,7 @@ public partial class SmtpServerService(
             {
                 if (mode == ListenerMode.ImplicitTls)
                 {
-                    if (config.TlsCertificatePath is null)
+                    if (!config.Tls.HasCertificate)
                         throw new InvalidOperationException("Implicit TLS requires a certificate.");
 
                     using var cert = LoadCertificate(config);
@@ -709,7 +709,7 @@ public partial class SmtpServerService(
                     {
                         await writer.WriteLineAsync("503 5.5.1 TLS is already active").ConfigureAwait(false);
                     }
-                    else if (config.EnableStartTls && config.TlsCertificatePath is not null
+                    else if (config.EnableStartTls && config.Tls.HasCertificate
                         && upgradableStream is not null)
                     {
                         await writer.WriteLineAsync("220 Ready to start TLS").ConfigureAwait(false);
@@ -803,12 +803,7 @@ public partial class SmtpServerService(
         await writer.WriteLineAsync("250 OK").ConfigureAwait(false);
     }
 
-    private static X509Certificate2 LoadCertificate(SmtpListenerOptions config)
-    {
-        if (config.TlsCertificateKeyPath is not null)
-            return X509Certificate2.CreateFromPemFile(config.TlsCertificatePath!, config.TlsCertificateKeyPath);
-        return X509CertificateLoader.LoadPkcs12FromFile(config.TlsCertificatePath!, password: null);
-    }
+    private static X509Certificate2 LoadCertificate(SmtpListenerOptions config) => config.Tls.CreateCertificate();
 
     private async Task<bool> TryAuthenticateAsServerAsync(
         SslStream stream,

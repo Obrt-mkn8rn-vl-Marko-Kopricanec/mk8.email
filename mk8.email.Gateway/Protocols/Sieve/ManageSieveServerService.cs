@@ -975,18 +975,7 @@ public sealed partial class ManageSieveServerService(
         return username.Length > 0 && password.Length > 0;
     }
 
-    private X509Certificate2 LoadCertificate()
-    {
-        if (environment.Tls.CertificateKeyPath is not null)
-        {
-            return X509Certificate2.CreateFromPemFile(
-                environment.Tls.CertificatePath!,
-                environment.Tls.CertificateKeyPath);
-        }
-        return X509CertificateLoader.LoadPkcs12FromFile(
-            environment.Tls.CertificatePath!,
-            password: null);
-    }
+    private X509Certificate2 LoadCertificate() => environment.Tls.CreateCertificate();
 
     private async Task<bool> TryAuthenticateAsServerAsync(
         SslStream stream,

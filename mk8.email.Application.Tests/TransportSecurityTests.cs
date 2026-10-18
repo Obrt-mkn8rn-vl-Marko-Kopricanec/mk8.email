@@ -672,15 +672,14 @@ internal sealed partial class TransportSecurityTests
 
     [TestMethod]
     [Timeout(10_000)]
-    public async Task ImplicitTlsCertificateLoadFailuresRemainWarnings()
+    public async Task ImplicitTlsInvalidSnapshotCertificateFailuresRemainWarnings()
     {
         var smtpPort = ReservePort();
         var imapPort = ReservePort();
-        var missingCertificatePath = Path.Combine(_testDirectory, "missing.pfx");
         var environment = CreateEnvironment(
             smtpImplicitTlsPort: smtpPort,
             imapImplicitTlsPort: imapPort,
-            certificatePath: missingCertificatePath);
+            certificatePkcs12: Convert.ToBase64String("invalid-pkcs12-fixture"u8));
         var smtpLogger = new CapturingLogger<SmtpServerService>();
         var imapLogger = new CapturingLogger<ImapServerService>();
         var smtpServer = (await ServerFixture.StartSmtpAsync(
@@ -4198,7 +4197,7 @@ internal sealed partial class TransportSecurityTests
         int? smtpImplicitTlsPort = null,
         int? imapImplicitTlsPort = null,
         int? pop3ImplicitTlsPort = null,
-        string? certificatePath = null,
+        string? certificatePkcs12 = null,
         int connectionTimeoutSeconds = 10,
         bool enableOAuth = false,
         bool requireAuthentication = true)
@@ -4241,7 +4240,7 @@ internal sealed partial class TransportSecurityTests
             },
             Tls = new TlsConfig
             {
-                CertificatePath = certificatePath ?? _certificatePath,
+                CertificatePkcs12 = certificatePkcs12 ?? Convert.ToBase64String(File.ReadAllBytes(_certificatePath)),
             },
             Limits = new LimitsConfig
             {

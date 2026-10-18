@@ -9,8 +9,7 @@ internal sealed record ImapListenerConfig(
     bool EnableImapImplicitTls,
     int ImapImplicitTlsPort,
     bool EnableStartTls,
-    string? TlsCertificatePath,
-    string? TlsCertificateKeyPath,
+    TlsConfig Tls,
     int MaxMessageSizeBytes,
     int ConnectionTimeoutSeconds,
     int MaxConnectionsPerIp)
@@ -22,8 +21,7 @@ internal sealed record ImapListenerConfig(
         environment.Imap.EnableImplicitTls,
         environment.Imap.ImplicitTlsPort,
         environment.Smtp.EnableStartTls,
-        environment.Tls.CertificatePath,
-        environment.Tls.CertificateKeyPath,
+        environment.Tls,
         environment.Limits.MaxMessageSizeBytes,
         environment.Limits.ConnectionTimeoutSeconds,
         environment.Limits.MaxConnectionsPerIp);

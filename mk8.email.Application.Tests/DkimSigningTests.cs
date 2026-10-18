@@ -39,7 +39,7 @@ internal sealed class DkimSigningTests
     {
         _testDirectory = Path.Combine(Path.GetTempPath(), $"mk8email-dkim-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_testDirectory);
-        _key = TestCertificateFactory.CreateDkimKey(_testDirectory);
+        _key = TestCertificateFactory.CreateDkimKey();
     }
 
     [TestCleanup]
@@ -54,7 +54,7 @@ internal sealed class DkimSigningTests
     {
         var signer = new MimeKitDkimSigningService();
 
-        var signed = signer.Sign(RawMessage, "tenant.example.test", "default", _key.PrivateKeyPath);
+        var signed = signer.SignWithPrivateKey(RawMessage, "tenant.example.test", "default", _key.PrivateKeyPem);
         using var message = LoadMessage(signed);
         var signatureIndex = message.Headers.IndexOf(HeaderId.DkimSignature);
 
@@ -73,7 +73,7 @@ internal sealed class DkimSigningTests
     public void BodyChangeInvalidatesSignature()
     {
         var signer = new MimeKitDkimSigningService();
-        var signed = signer.Sign(RawMessage, "tenant.example.test", "default", _key.PrivateKeyPath);
+        var signed = signer.SignWithPrivateKey(RawMessage, "tenant.example.test", "default", _key.PrivateKeyPem);
         var changed = signed.Replace("Hello DKIM.", "Changed body.", StringComparison.Ordinal);
         using var message = LoadMessage(changed);
         var signature = message.Headers[message.Headers.IndexOf(HeaderId.DkimSignature)];
@@ -85,14 +85,14 @@ internal sealed class DkimSigningTests
     [TestMethod]
     public void InvalidPrivateKeyStopsSigning()
     {
-        var invalidKeyPath = Path.Combine(_testDirectory, "invalid.pem");
-        File.WriteAllText(invalidKeyPath, "not a private key");
+        const string invalidKey = "synthetic-invalid-private-key";
         var signer = new MimeKitDkimSigningService();
 
         var exception = Assert.ThrowsExactly<DkimSigningException>(
-            () => signer.Sign(RawMessage, "tenant.example.test", "default", invalidKeyPath));
+            () => signer.SignWithPrivateKey(RawMessage, "tenant.example.test", "default", invalidKey));
 
-        Assert.IsNotNull(exception.InnerException);
+        Assert.IsNull(exception.InnerException);
+        Assert.IsFalse(exception.ToString().Contains(invalidKey, StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -101,7 +101,7 @@ internal sealed class DkimSigningTests
         var signer = new MimeKitDkimSigningService();
 
         Assert.ThrowsExactly<DkimSigningException>(
-            () => signer.Sign("Subject: Missing From\r\n\r\nbody", "tenant.example.test", "default", _key.PrivateKeyPath));
+            () => signer.SignWithPrivateKey("Subject: Missing From\r\n\r\nbody", "tenant.example.test", "default", _key.PrivateKeyPem));
     }
 
     [TestMethod]
@@ -121,13 +121,23 @@ internal sealed class DkimSigningTests
             "Content-Transfer-Encoding: 8bit\r\n\r\n" +
             wireText + "\r\n";
 
-        var signed = signer.Sign(rawMessage, "tenant.example.test", "default", _key.PrivateKeyPath);
+        var signed = signer.SignWithPrivateKey(rawMessage, "tenant.example.test", "default", _key.PrivateKeyPem);
 
         Assert.IsTrue(Encoding.Latin1.GetBytes(signed).AsSpan().IndexOf(utf8Text) >= 0);
         using var message = LoadMessage(signed);
         var signature = message.Headers[message.Headers.IndexOf(HeaderId.DkimSignature)];
         var verifier = new DkimVerifier(new TestPublicKeyLocator(_key.PublicDnsRecord));
         Assert.IsTrue(verifier.Verify(message, signature));
+    }
+
+    [TestMethod]
+    public void RetiredFileEntryPointRefusesEvenAValidOwnedKeyFile()
+    {
+        var path = Path.Combine(_testDirectory, "retired-key.pem");
+        File.WriteAllText(path, _key.PrivateKeyPem);
+        var signer = new MimeKitDkimSigningService();
+        Assert.ThrowsExactly<NotSupportedException>(() => signer.Sign(RawMessage, "tenant.example.test", "default", path));
+        Assert.AreEqual(_key.PrivateKeyPem, File.ReadAllText(path), StringComparer.Ordinal);
     }
 
     private static MimeMessage LoadMessage(string rawMessage)

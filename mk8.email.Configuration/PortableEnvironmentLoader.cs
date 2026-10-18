@@ -56,12 +56,18 @@ public static class PortableEnvironmentLoader
         }
 
         RefuseSecretFileFallbacks(config);
+        if (role is EnvironmentValidationRole.ApplicationWorker
+            && (config.Tls.CertificatePkcs12 is not null || config.Tls.CertificatePassword is not null))
+        {
+            throw new InvalidOperationException("Worker configuration must not contain Gateway TLS material.");
+        }
         if (role is EnvironmentValidationRole.Gateway
             && (!string.IsNullOrEmpty(config.OAuth.SigningKey)
-                || !string.IsNullOrEmpty(config.Mfa.EncryptionKey)))
+                || !string.IsNullOrEmpty(config.Mfa.EncryptionKey)
+                || !string.IsNullOrEmpty(config.Dkim.PrivateKeyPem)))
         {
             throw new InvalidOperationException(
-                "Gateway configuration must not contain Worker-only OAuth or MFA secret values.");
+                "Gateway configuration must not contain Worker-only OAuth, MFA or DKIM secret values.");
         }
 
         var errors = config.Validate(isDevelopment: false, role);
@@ -97,7 +103,10 @@ public static class PortableEnvironmentLoader
             || config.Mfa.EncryptionKeyFile is not null
             || config.Messaging.EncryptionKeyFile is not null
             || config.Messaging.DecryptionKeys.Any(key => key.KeyFile is not null)
-            || config.ObjectStorage.ConnectionStringFile is not null)
+            || config.ObjectStorage.ConnectionStringFile is not null
+            || config.Tls.CertificatePath is not null
+            || config.Tls.CertificateKeyPath is not null
+            || config.Dkim.PrivateKeyPath is not null)
         {
             throw new InvalidOperationException(
                 "Separate secret-file settings are not supported; resolve values through Supprocom.Secrets.");

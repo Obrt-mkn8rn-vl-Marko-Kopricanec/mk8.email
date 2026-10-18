@@ -106,9 +106,9 @@ internal sealed partial class NativeHostStartupTests
             return;
         }
         if (submissionControl is not null)
-            await submissionControl(smtpPort, config.Tls.CertificatePath!, scanner.Scanned, token).ConfigureAwait(false);
+            await submissionControl(smtpPort, Path.Combine(directory, "submission.pfx"), scanner.Scanned, token).ConfigureAwait(false);
         else if (implicitTls.HasValue)
-            await RunSubmissionSessionAsync(database.ConnectionString, smtpPort, config.Tls.CertificatePath!, implicitTls.Value, token).ConfigureAwait(false);
+            await RunSubmissionSessionAsync(database.ConnectionString, smtpPort, Path.Combine(directory, "submission.pfx"), implicitTls.Value, token).ConfigureAwait(false);
         else
             await RunSessionAsync(database.ConnectionString, blob, container, smtpPort, unknownRecipient, scanner.Scanned, token).ConfigureAwait(false);
         AssertHostsRunning(worker, gateway);
@@ -302,7 +302,9 @@ internal sealed partial class NativeHostStartupTests
                     AllowRelay = false,
                 }
                 : new SmtpConfig { Hostname = "email.example.test", ListenAddress = "127.0.0.1", Port = smtpPort, AllowRelay = false },
-            Tls = implicitTls.HasValue ? new TlsConfig { CertificatePath = CreateSubmissionCertificate(directory) } : new TlsConfig(),
+            Tls = implicitTls.HasValue
+                ? new TlsConfig { CertificatePkcs12 = Convert.ToBase64String(File.ReadAllBytes(CreateSubmissionCertificate(directory))) }
+                : new TlsConfig(),
             Imap = new ImapConfig { EnableImap = false },
             Pop3 = new Pop3Config { EnablePop3 = false },
             Sieve = new SieveConfig { EnableManageSieve = false },

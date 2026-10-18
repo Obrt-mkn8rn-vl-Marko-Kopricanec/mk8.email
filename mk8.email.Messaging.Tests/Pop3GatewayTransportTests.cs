@@ -91,7 +91,7 @@ internal sealed class Pop3GatewayTransportTests
                 EnableStartTls = true,
                 Port = port,
             },
-            Tls = new TlsConfig { CertificatePath = certificatePath },
+            Tls = new TlsConfig { CertificatePkcs12 = Convert.ToBase64String(expectedCertificate.Export(X509ContentType.Pkcs12)) },
             Limits = new LimitsConfig
             {
                 ConnectionTimeoutSeconds = 15,

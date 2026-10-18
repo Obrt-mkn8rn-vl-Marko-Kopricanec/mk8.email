@@ -1,4 +1,6 @@
 #nullable enable
+mk8.email.Application.Interfaces.IDkimSigningService.SignWithPrivateKey(string! rawMessage, string! domain, string! selector, string! privateKeyPem) -> string!
+mk8.email.Application.Services.MimeKitDkimSigningService.SignWithPrivateKey(string! rawMessage, string! domain, string! selector, string! privateKeyPem) -> string!
 mk8.email.Application.Services.MailQueueMaintenanceService.PurgeQuarantinedSmokeMessageFromSenderAsync(string! marker, string! expectedEnvelopeSender, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
 const mk8.email.Application.Services.ApplicationOperationReceiptStore.ContentType = "application/vnd.mk8.protected-receipt+json" -> string!
 mk8.email.Application.Interfaces.DkimSigningException.DkimSigningException() -> void

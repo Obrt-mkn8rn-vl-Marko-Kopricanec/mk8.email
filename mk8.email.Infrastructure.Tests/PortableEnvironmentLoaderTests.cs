@@ -15,6 +15,55 @@ public sealed class PortableEnvironmentLoaderTests
     public TestContext TestContext { get; set; } = null!;
 
     [TestMethod]
+    public async Task WorkerRefusesGatewayTlsMaterialBeforeCertificateImport()
+    {
+        using var fixture = new SettingsFixture();
+        fixture.Values["Tls:CertificatePkcs12"] = "synthetic-gateway-only-material";
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var failure = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+            LoadAsync(fixture, EnvironmentValidationRole.ApplicationWorker)).ConfigureAwait(false);
+        Assert.AreEqual("Worker configuration must not contain Gateway TLS material.", failure.Message, StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    public async Task ProtectedTlsMaterialSurvivesDocumentReplacementAsOneStartupSnapshot()
+    {
+        using var fixture = new SettingsFixture();
+        using var expected = TlsSnapshotTests.CreateCertificate();
+        var encoded = Convert.ToBase64String(expected.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pkcs12));
+        fixture.Values["Tls:CertificatePkcs12"] = encoded;
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var loaded = await LoadAsync(fixture, EnvironmentValidationRole.Gateway).ConfigureAwait(false);
+        var protectedBytes = await File.ReadAllBytesAsync(Path.Combine(fixture.Root.FullName, ".env"), TestContext.CancellationToken).ConfigureAwait(false);
+        Assert.IsFalse(System.Text.Encoding.UTF8.GetString(protectedBytes).Contains(encoded, StringComparison.Ordinal));
+        fixture.Values["Tls:CertificatePkcs12"] = "later-invalid-certificate";
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        using var retained = loaded.Tls.CreateCertificate();
+        Assert.AreEqual(expected.Thumbprint, retained.Thumbprint, StringComparer.Ordinal);
+        Assert.IsTrue(retained.HasPrivateKey);
+    }
+
+    [TestMethod]
+    public async Task ProtectedDkimMaterialRemainsAnIndependentWorkerStartupSnapshot()
+    {
+        using var fixture = new SettingsFixture();
+        using var expected = System.Security.Cryptography.RSA.Create(2048);
+        fixture.Values["Dkim:EnableSigning"] = "true";
+        fixture.Values["Dkim:PrivateKeyPem"] = expected.ExportPkcs8PrivateKeyPem();
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var loaded = await LoadAsync(fixture, EnvironmentValidationRole.ApplicationWorker).ConfigureAwait(false);
+        var protectedBytes = await File.ReadAllBytesAsync(Path.Combine(fixture.Root.FullName, ".env"), TestContext.CancellationToken).ConfigureAwait(false);
+        Assert.IsFalse(System.Text.Encoding.UTF8.GetString(protectedBytes).Contains("BEGIN PRIVATE KEY", StringComparison.Ordinal));
+        fixture.Values["Dkim:PrivateKeyPem"] = "later-invalid-key";
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        using var retained = loaded.Dkim.CreateSigningKey();
+        Assert.AreSequenceEqual(expected.ExportSubjectPublicKeyInfo(), retained.ExportSubjectPublicKeyInfo());
+        var challenge = "finite-synthetic-signature-control"u8.ToArray();
+        var signature = retained.SignData(challenge, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        Assert.IsTrue(expected.VerifyData(challenge, signature, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1));
+    }
+
+    [TestMethod]
     [DataRow(EnvironmentValidationRole.Gateway)]
     [DataRow(EnvironmentValidationRole.ApplicationWorker)]
     public async Task PortableValuesAreValidatedAndRemainAStartupSnapshot(EnvironmentValidationRole role)
@@ -63,6 +112,9 @@ public sealed class PortableEnvironmentLoaderTests
     [DataRow("Messaging:EncryptionKeyFile")]
     [DataRow("Messaging:DecryptionKeys:0:KeyFile")]
     [DataRow("ObjectStorage:ConnectionStringFile")]
+    [DataRow("Tls:CertificatePath")]
+    [DataRow("Tls:CertificateKeyPath")]
+    [DataRow("Dkim:PrivateKeyPath")]
     public async Task SecretFileFallbacksRefuseBeforeAnyReferencedFileIsRead(string key)
     {
         using var fixture = new SettingsFixture();
@@ -80,6 +132,7 @@ public sealed class PortableEnvironmentLoaderTests
     [TestMethod]
     [DataRow("OAuth:SigningKey")]
     [DataRow("Mfa:EncryptionKey")]
+    [DataRow("Dkim:PrivateKeyPem")]
     public async Task GatewayRefusesWorkerOnlySecretValues(string key)
     {
         using var fixture = new SettingsFixture();
@@ -88,7 +141,7 @@ public sealed class PortableEnvironmentLoaderTests
         await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
         var failure = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             LoadAsync(fixture, EnvironmentValidationRole.Gateway)).ConfigureAwait(false);
-        Assert.Contains("Worker-only OAuth or MFA", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Worker-only OAuth, MFA or DKIM", failure.Message, StringComparison.Ordinal);
         Assert.IsFalse(failure.Message.Contains(secret, StringComparison.Ordinal));
     }
 

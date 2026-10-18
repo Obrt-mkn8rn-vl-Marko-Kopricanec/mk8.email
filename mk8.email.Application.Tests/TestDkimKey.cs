@@ -1,3 +1,3 @@
 namespace mk8.email.Application.Tests;
 
-internal sealed record TestDkimKey(string PrivateKeyPath, string PublicDnsRecord);
+internal sealed record TestDkimKey(string PrivateKeyPem, string PublicDnsRecord);

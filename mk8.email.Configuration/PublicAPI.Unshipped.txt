@@ -1,4 +1,13 @@
 #nullable enable
+mk8.email.Configuration.DkimConfig.PrivateKeyPem.get -> string?
+mk8.email.Configuration.DkimConfig.PrivateKeyPem.init -> void
+mk8.email.Configuration.DkimConfig.CreateSigningKey() -> System.Security.Cryptography.RSA!
+mk8.email.Configuration.TlsConfig.CertificatePkcs12.get -> string?
+mk8.email.Configuration.TlsConfig.CertificatePkcs12.init -> void
+mk8.email.Configuration.TlsConfig.CertificatePassword.get -> string?
+mk8.email.Configuration.TlsConfig.CertificatePassword.init -> void
+mk8.email.Configuration.TlsConfig.HasCertificate.get -> bool
+mk8.email.Configuration.TlsConfig.CreateCertificate() -> System.Security.Cryptography.X509Certificates.X509Certificate2!
 mk8.email.Configuration.GatewayHttpConfig
 mk8.email.Configuration.GatewayHttpConfig.GatewayHttpConfig() -> void
 mk8.email.Configuration.GatewayHttpConfig.ListenAddress.get -> string!

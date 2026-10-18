@@ -235,7 +235,7 @@ public sealed partial class Pop3ServerService(
 
                     if (mode == ListenerMode.ImplicitTls)
                     {
-                        if (environment.Tls.CertificatePath is null)
+                        if (!environment.Tls.HasCertificate)
                             throw new InvalidOperationException("Implicit POP3 TLS requires a certificate.");
 
                         using var certificate = LoadCertificate();
@@ -387,7 +387,7 @@ public sealed partial class Pop3ServerService(
                         await writer.WriteLineAsync("-ERR [SYS/PERM] TLS is already active").ConfigureAwait(false);
                     }
                     else if (!environment.Pop3.EnableStartTls
-                        || environment.Tls.CertificatePath is null)
+                        || !environment.Tls.HasCertificate)
                     {
                         await writer.WriteLineAsync("-ERR [SYS/PERM] STLS is not available").ConfigureAwait(false);
                     }
@@ -514,7 +514,7 @@ public sealed partial class Pop3ServerService(
                 await writer.WriteLineAsync($"SASL {mechanisms}").ConfigureAwait(false);
             }
             else if (environment.Pop3.EnableStartTls
-                && environment.Tls.CertificatePath is not null)
+                && environment.Tls.HasCertificate)
                 await writer.WriteLineAsync("STLS").ConfigureAwait(false);
         }
         await writer.WriteLineAsync("IMPLEMENTATION mk8.email").ConfigureAwait(false);
@@ -1085,18 +1085,7 @@ public sealed partial class Pop3ServerService(
         }
     }
 
-    private X509Certificate2 LoadCertificate()
-    {
-        if (environment.Tls.CertificateKeyPath is not null)
-        {
-            return X509Certificate2.CreateFromPemFile(
-                environment.Tls.CertificatePath!,
-                environment.Tls.CertificateKeyPath);
-        }
-        return X509CertificateLoader.LoadPkcs12FromFile(
-            environment.Tls.CertificatePath!,
-            password: null);
-    }
+    private X509Certificate2 LoadCertificate() => environment.Tls.CreateCertificate();
 
     private async Task<bool> TryAuthenticateAsServerAsync(
         SslStream stream,

@@ -235,7 +235,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 }
                 if (mode == ListenerMode.ImplicitTls)
                 {
-                    if (config.TlsCertificatePath is null)
+                    if (!config.Tls.HasCertificate)
                         throw new InvalidOperationException("Implicit TLS requires a certificate.");
 
                     var upgraded = await TryUpgradeToTlsAsync(
@@ -260,7 +260,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                         stream, config, session, timeout, sendGreeting).ConfigureAwait(false);
                     sendGreeting = false;
 
-                    if (upgrade == SessionUpgrade.StartTls && config.TlsCertificatePath is not null)
+                    if (upgrade == SessionUpgrade.StartTls && config.Tls.HasCertificate)
                     {
                         var upgraded = await TryUpgradeToTlsAsync(
                             stream, config, remoteLabel, timeout.Token).ConfigureAwait(false);
@@ -413,7 +413,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                         await writer.WriteLineAsync($"{tag} BAD STARTTLS is only available before authentication").ConfigureAwait(false);
                         break;
                     }
-                    if (config.EnableStartTls && config.TlsCertificatePath is not null)
+                    if (config.EnableStartTls && config.Tls.HasCertificate)
                     {
                         await writer.WriteLineAsync($"{tag} OK Begin TLS negotiation").ConfigureAwait(false);
                         await writer.FlushAsync(ct).ConfigureAwait(false);
@@ -2816,12 +2816,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 or '_'
                 or '-');
 
-    private static X509Certificate2 LoadCertificate(ImapListenerConfig config)
-    {
-        if (config.TlsCertificateKeyPath is not null)
-            return X509Certificate2.CreateFromPemFile(config.TlsCertificatePath!, config.TlsCertificateKeyPath);
-        return X509CertificateLoader.LoadPkcs12FromFile(config.TlsCertificatePath!, password: null);
-    }
+    private static X509Certificate2 LoadCertificate(ImapListenerConfig config) => config.Tls.CreateCertificate();
 
     private async Task<SslStream?> TryUpgradeToTlsAsync(
         Stream transport,

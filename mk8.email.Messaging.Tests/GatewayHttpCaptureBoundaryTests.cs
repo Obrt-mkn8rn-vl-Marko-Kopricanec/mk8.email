@@ -397,7 +397,8 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
                 Smtp = new SmtpConfig { Hostname = "email.example.test", EnableSmtp = false, EnableImplicitTls = discoveryCertificatePath is not null },
                 Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = discoveryCertificatePath is not null },
                 Pop3 = new Pop3Config { EnableImplicitTls = discoveryCertificatePath is not null },
-                Tls = new TlsConfig { CertificatePath = discoveryCertificatePath },
+                Tls = discoveryCertificatePath is null ? new TlsConfig()
+                    : new TlsConfig { CertificatePkcs12 = Convert.ToBase64String(File.ReadAllBytes(discoveryCertificatePath)) },
                 Dav = new DavConfig { EnableDav = false },
                 Jmap = new JmapConfig { EnableJmap = !disableJmap, IsDefault = !disableJmap, MaxUploadSizeBytes = UploadBytes, MaxRequestSizeBytes = 65_536 },
                 Limits = new LimitsConfig { MaxMessageSizeBytes = disableJmap ? 65_536 : 1_048_576 },

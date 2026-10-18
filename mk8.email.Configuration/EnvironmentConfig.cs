@@ -289,14 +289,12 @@ public sealed class EnvironmentConfig
             || Pop3.EnableStartTls
             || Pop3.EnableImplicitTls
             || (Sieve.EnableManageSieve && Sieve.EnableStartTls));
-        if (needsCertificate)
-            RequireFile(errors, Tls.CertificatePath, "Tls.CertificatePath");
-        if (validatesPresentation && !string.IsNullOrWhiteSpace(Tls.CertificateKeyPath))
-            RequireFile(errors, Tls.CertificateKeyPath, "Tls.CertificateKeyPath");
+        if (Tls.Validate(needsCertificate) is { } tlsError)
+            errors.Add(tlsError);
+        if (Dkim.Validate(validatesApplication && Dkim.EnableSigning) is { } dkimError)
+            errors.Add(dkimError);
         if (Dkim.EnableSigning)
         {
-            if (validatesApplication)
-                RequireFile(errors, Dkim.PrivateKeyPath, "Dkim.PrivateKeyPath");
             if (!DkimIdentityValidator.IsValidSelector(Dkim.Selector))
                 errors.Add("Dkim.Selector must be a DNS label.");
         }
@@ -481,18 +479,6 @@ public sealed class EnvironmentConfig
     {
         if (enabled)
             ports.Add((name, port));
-    }
-
-    private static void RequireFile(List<string> errors, string? path, string name)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            errors.Add($"{name} is required.");
-            return;
-        }
-
-        if (!File.Exists(Path.GetFullPath(path)))
-            errors.Add($"{name} does not exist.");
     }
 
     private static void RequirePort(List<string> errors, int port, string name)
